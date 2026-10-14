@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: whatsbot_ia
+          POSTGRES_USER: whatsbot
+          POSTGRES_PASSWORD: whatsbot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U whatsbot -d whatsbot_ia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DJANGO_SECRET_KEY: chave-de-ci-sem-valor-em-producao
+      DJANGO_DEBUG: "False"
+      DATABASE_URL: postgres://whatsbot:whatsbot@localhost:5432/whatsbot_ia
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Instalar dependencias
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Formatacao
+        run: uv run ruff format --check .
+
+      - name: Checagem do Django
+        run: uv run python manage.py check
+
+      - name: Migration faltando
+        run: uv run python manage.py makemigrations --check --dry-run
+
+      - name: Testes
+        run: uv run pytest
