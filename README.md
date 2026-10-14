@@ -47,6 +47,25 @@ tests/
 
 ## Desenvolvimento
 
-Configuracao via variaveis de ambiente — copie `.env.example` para `.env` e
-preencha. As credenciais WABA de cada cliente ficam no banco (por tenant), nao
-no `.env`.
+Requer Python 3.13 e [uv](https://docs.astral.sh/uv/). Configuracao via
+variaveis de ambiente — copie `.env.example` para `.env` e preencha. As
+credenciais WABA de cada cliente ficam no banco (por tenant), nao no `.env`.
+
+```bash
+uv sync                                  # cria .venv e instala do uv.lock
+cp .env.example .env                     # e preencha DJANGO_SECRET_KEY
+docker compose up -d                     # postgres + redis
+uv run python manage.py migrate
+uv run python manage.py createsuperuser
+uv run python manage.py runserver        # admin em /painel/ (ver ADMIN_URL)
+uv run celery -A config worker -l info   # em outro terminal
+```
+
+Qualidade, o mesmo que o CI roda:
+
+```bash
+uv run ruff check . && uv run ruff format --check .
+uv run python manage.py check
+uv run python manage.py makemigrations --check --dry-run
+uv run pytest
+```
