@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "apps.common",
+    "apps.tenants",
 ]
 
 MIDDLEWARE = [
@@ -74,6 +76,8 @@ DATABASES = {
         conn_max_age=config("DB_CONN_MAX_AGE", default=60, cast=int),
     ),
 }
+
+AUTH_USER_MODEL = "tenants.Usuario"
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
