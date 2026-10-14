@@ -25,8 +25,10 @@ Decisao de framework e tema registrada em [DESIGN.md](DESIGN.md).
 
 ## Status
 
-Esqueleto. Estrutura de pastas e documentacao de arquitetura prontas; o codigo
-dos apps ainda nao foi escrito.
+Fatia 0 (bootstrap) entregue: projeto Django de pe, `Tenant` + `Configuracao`
++ `Usuario`, escopo por cliente no admin (Unfold), Celery configurado e CI.
+Os apps de canal, conversa, responder, catalogo, reserva e metrica ainda estao
+vazios — proxima fatia e a borda de entrada (webhook).
 
 ## Estrutura
 
