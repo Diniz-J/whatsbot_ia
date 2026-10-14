@@ -83,8 +83,13 @@ MensagemEntrada + Contexto  ->  Responder.handle  ->  Resposta
    preco, o anti-alucinacao vira teatro. Preco, horario e disponibilidade
    **nunca** saem da cabeca do modelo — sempre de servico/dado. Isso precisa
    de teste travando.
-3. **Tenant resolvido pelo `phone_number_id` do payload**, nunca por path nem
-   subdominio. O webhook da Meta e uma URL unica para o app inteiro.
+3. **Uma instancia por cliente, e o `phone_number_id` confere o payload.**
+   Cada cliente roda a propria stack com o proprio banco (secao 8), entao o
+   webhook dele tem URL propria e nao ha tenant a resolver. O
+   `phone_number_id` do payload serve de conferencia: se nao for o do cliente
+   daquela instancia, a entrega e recusada em vez de gravada. Sem essa
+   conferencia, quem descobrisse a URL conseguiria injetar conversa de outro
+   numero.
 4. **Webhook idempotente.** A Meta reenvia; a chave e o `message id` dela, com
    unique no banco. Persiste cru primeiro, processa depois — se o LLM cair, o
    evento nao se perde.
@@ -117,11 +122,52 @@ MensagemEntrada + Contexto  ->  Responder.handle  ->  Resposta
 - `apps/metricas/` registra custo por mensagem e por token, por tenant — base
   do faturamento e do controle de margem.
 
-## 8. Multi-tenant
+## 8. Topologia de deploy e isolamento
 
-- `Tenant` + `Configuracao` guardam o tier (`responder`), as credenciais WABA
-  e o plano. Credenciais de cada cliente ficam no banco, nao no `.env`.
-- Isolamento por dado/escopo (mixins em `common/`), resolvido pelo
-  `phone_number_id`. Admin do Django (Unfold) e o back-office por cliente.
-- Rota do admin e configuravel no `urls.py` (nao deixar no `/admin/` padrao);
+Decidido em out/2026: **uma stack e um banco por cliente, na mesma VPS**. O
+dado sensivel do cliente mora no Postgres, entao o isolamento que importa e o
+de banco, nao o de kernel.
+
+| | Isolamento | Infra | Operacao |
+|---|---|---|---|
+| A — instancia compartilhada, escopo por linha | fraco: um bug de escopo vaza todos | 1 VPS | 1 host, 1 banco, 1 deploy |
+| **B — 1 stack + 1 banco por cliente, mesma VPS** | **forte no dado** | **1 VPS** | **1 host, N bancos, 1 script** |
+| C — 1 VPS por cliente | maximo | N VPS | N hosts, N backups, N deploys |
+
+**A esta fora** porque um bug de escopo custaria o dado de todos os clientes
+de uma vez. **C nao e o default** porque operacao e o recurso escasso deste
+projeto, e nao dinheiro: N VPS sao N sistemas para atualizar, N certificados e
+N restores para testar, e uma VPS esquecida sem patch e pior que um banco
+separado num host mantido. Em B ha um proxy reverso, um certificado wildcard e
+N upstreams. C fica como tier premium para quem exigir servidor dedicado
+(clinica, escola: dado de saude ou de menor) — ai e preco, nao arquitetura.
+
+Whitelabel nao entra nessa conta: marca por cliente (nome, logo, cor no admin)
+e ortogonal a topologia e funciona em qualquer uma das tres.
+
+**O FK de tenant continua, com uma linha por instancia.** Parece
+contraintuitivo em single-tenant e e deliberado:
+
+- Remover agora sai barato; readicionar depois exige tocar todo modelo de
+  dominio, com migration. O risco e de mao unica.
+- Com a linha no banco, a `Configuracao` fica no banco, e trocar `rules` por
+  `llm` segue sendo um campo no admin. Como variavel de ambiente, voltaria a
+  ser deploy.
+- Em desenvolvimento, varios clientes falsos no mesmo banco facilitam o teste.
+
+O `TenantScopedModelAdmin` segue valendo pelo mesmo motivo: com uma linha ele
+nao faz nada, e no dia em que uma instancia tiver duas ele e a diferenca entre
+separacao e vazamento.
+
+**Consequencias que o codigo assume:**
+
+- Cada cliente tem URL de webhook propria; o `phone_number_id` e conferencia,
+  nao roteamento (secao 5, invariante 3).
+- Credenciais WABA ficam no banco do cliente, nunca num `.env` compartilhado.
+- Backup e por banco, com restore testado por cliente.
+- Rota do admin configuravel no `urls.py` (nao deixar no `/admin/` padrao);
   proteger com 2FA, rate limit e, se possivel, allowlist de IP.
+
+**O que ainda nao existe:** template de stack por cliente, provisionamento,
+migrate e rotacao de secret automatizados. Sem isso, B nao chega no terceiro
+cliente — e essa automacao e o trabalho real que a escolha de B cria.

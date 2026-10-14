@@ -25,7 +25,9 @@ plugavel por tenant. Leia [DESIGN.md](DESIGN.md) antes de escrever qualquer app
 2. Preco, horario e disponibilidade vem sempre de servico/dado, nunca da cabeca
    do LLM. As tools do LLM sao as mesmas funcoes de servico que o RuleResponder
    chama. Isso tem que ter teste travando.
-3. Tenant resolvido pelo `phone_number_id` do payload (webhook e URL unica).
+3. Uma instancia e um banco por cliente (DESIGN.md secao 8). O webhook de cada
+   cliente tem URL propria, entao o `phone_number_id` do payload e conferencia
+   e nao roteamento: payload de outro numero e recusado.
 4. Webhook idempotente: unique no `message id` da Meta, persiste cru antes de
    processar.
 5. Outbound sempre pela fila (Celery).
