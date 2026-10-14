@@ -25,10 +25,17 @@ Decisao de framework e tema registrada em [DESIGN.md](DESIGN.md).
 
 ## Status
 
-Fatia 0 (bootstrap) entregue: projeto Django de pe, `Tenant` + `Configuracao`
-+ `Usuario`, escopo por cliente no admin (Unfold), Celery configurado e CI.
-Os apps de canal, conversa, responder, catalogo, reserva e metrica ainda estao
-vazios — proxima fatia e a borda de entrada (webhook).
+Fatia 1 (borda de entrada) entregue: o webhook da Cloud API confere a
+assinatura HMAC e o numero de destino, grava a entrega crua de forma
+idempotente e enfileira o processamento, que normaliza em contato, conversa e
+mensagem. Antes dela, a fatia 0 deixou o projeto de pe com `Tenant`,
+`Configuracao`, `Usuario` e o escopo por cliente no admin.
+
+Os apps `responder`, `catalogo`, `reservas` e `metricas` ainda estao vazios. A
+proxima fatia e a borda de saida: envio de texto e de template pela fila,
+respeitando a janela de 24h.
+
+Webhook em `POST /webhook/whatsapp/` (e `GET` para a verificacao da Meta).
 
 ## Estrutura
 

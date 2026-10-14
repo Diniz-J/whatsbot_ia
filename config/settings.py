@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "apps.tenants",
     "apps.canal",
     "apps.conversas",
+    "apps.core",
 ]
 
 MIDDLEWARE = [
