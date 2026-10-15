@@ -78,7 +78,12 @@ class Item(BaseModelTenant):
         verbose_name_plural = "itens"
         ordering = ["categoria__ordem", "ordem", "nome"]
         constraints = [
-            models.UniqueConstraint(fields=["tenant", "nome"], name="item_unico_por_nome")
+            # Nome unico dentro da categoria, nao no cardapio inteiro: o mesmo
+            # nome em categorias diferentes e legitimo (um combo em Promocoes e
+            # outro em Almoco, agua em Bebidas e num Combo).
+            models.UniqueConstraint(
+                fields=["tenant", "categoria", "nome"], name="item_unico_por_categoria_e_nome"
+            )
         ]
         indexes = [models.Index(fields=["tenant", "disponivel"])]
 
