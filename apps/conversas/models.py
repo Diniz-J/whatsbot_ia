@@ -75,6 +75,23 @@ class Mensagem(BaseModelTenant):
         ENTRADA = "entrada", "Recebida"
         SAIDA = "saida", "Enviada"
 
+    class Status(models.TextChoices):
+        """Ciclo de vida de uma mensagem de saida.
+
+        Mensagem de entrada nasce `recebida` e fica. A de saida nasce
+        `enfileirada` antes de qualquer chamada de rede, para que uma queda no
+        meio do envio deixe rastro em vez de desaparecer.
+        """
+
+        RECEBIDA = "recebida", "Recebida"
+        ENFILEIRADA = "enfileirada", "Enfileirada"
+        # Reservada entre o claim e a resposta da Meta. Existe para duas
+        # execucoes da mesma tarefa nao mandarem a mesma mensagem duas vezes:
+        # template e cobrado, e o cliente receberia em dobro.
+        ENVIANDO = "enviando", "Enviando"
+        ENVIADA = "enviada", "Enviada"
+        FALHOU = "falhou", "Falhou"
+
     # CASCADE por design: a mensagem e filha da conversa e nao faz sentido
     # sozinha. E a mesma excecao que o guardrail de PROTECT prevê.
     conversa = models.ForeignKey(
@@ -84,9 +101,14 @@ class Mensagem(BaseModelTenant):
         verbose_name="conversa",
     )
     direcao = models.CharField("direcao", max_length=10, choices=Direcao.choices)
+    status = models.CharField(
+        "status", max_length=20, choices=Status.choices, default=Status.RECEBIDA
+    )
     id_externo = models.CharField("id na Meta", max_length=128, blank=True)
     tipo = models.CharField("tipo", max_length=30, default="text")
     texto = models.TextField("texto", blank=True)
+    template = models.CharField("template", max_length=120, blank=True)
+    erro = models.TextField("erro do envio", blank=True)
 
     class Meta:
         verbose_name = "mensagem"
