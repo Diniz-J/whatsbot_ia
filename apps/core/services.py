@@ -21,8 +21,11 @@ def processar_evento(evento: EventoWebhook) -> list[Mensagem]:
 
     Idempotente de proposito: um evento ja processado volta vazio em vez de
     duplicar mensagem, porque a tarefa pode ser reentregue pela fila mesmo
-    depois de ter rodado.
+    depois de ter rodado — e pode ser reentregue enquanto a primeira ainda
+    roda, por isso a linha e lida com lock e nao so consultada. Sem o lock,
+    as duas execucoes leriam `processado_em` nulo e as duas gravariam.
     """
+    evento = EventoWebhook.objects.select_for_update().get(pk=evento.pk)
     if evento.processado_em is not None:
         logger.info("Evento %s ja processado, ignorando", evento.id_mensagem)
         return []
@@ -35,6 +38,7 @@ def processar_evento(evento: EventoWebhook) -> list[Mensagem]:
         # da segunda a criaria de novo.
         if entrada.id_externo != evento.id_mensagem:
             continue
+
         contato, _ = Contato.objects.get_or_create(
             tenant_id=evento.tenant_id,
             telefone=entrada.telefone,
@@ -59,11 +63,22 @@ def processar_evento(evento: EventoWebhook) -> list[Mensagem]:
             )
         )
 
-        # A janela de 24h conta da ultima mensagem do cliente, entao ela so
-        # anda aqui, no caminho de entrada.
-        conversa.ultima_entrada_em = evento.criado_em
-        conversa.save(update_fields=["ultima_entrada_em", "atualizado_em"])
+        _avancar_janela(conversa, entrada.enviada_em or evento.criado_em)
 
     evento.processado_em = timezone.now()
     evento.save(update_fields=["processado_em", "atualizado_em"])
     return criadas
+
+
+def _avancar_janela(conversa: Conversa, momento) -> None:
+    """Move a janela de 24h para frente, nunca para tras.
+
+    A janela conta da ultima mensagem do cliente, entao ela so anda no
+    caminho de entrada — e so para frente: processar fora de ordem, ou
+    reprocessar uma entrega antiga, nao pode encurtar uma janela que ja
+    estava aberta por uma mensagem mais nova.
+    """
+    if conversa.ultima_entrada_em is not None and momento <= conversa.ultima_entrada_em:
+        return
+    conversa.ultima_entrada_em = momento
+    conversa.save(update_fields=["ultima_entrada_em", "atualizado_em"])

@@ -7,6 +7,7 @@ um metodo abstrato sem implementacao seria deixar casca morta no caminho.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,9 @@ class MensagemEntrada:
     nome_perfil: str
     tipo: str
     texto: str
+    # Quando o cliente mandou, segundo a Meta. `None` quando a entrega nao
+    # traz timestamp utilizavel; quem usa decide o fallback.
+    enviada_em: datetime | None
 
 
 class Canal(ABC):

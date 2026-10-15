@@ -1,6 +1,7 @@
 """Adaptador da WhatsApp Cloud API."""
 
 import logging
+from datetime import UTC, datetime
 
 from apps.canal.base import Canal, MensagemEntrada
 
@@ -66,10 +67,28 @@ class CanalWhatsApp(Canal):
                         nome_perfil=nomes.get(str(telefone), ""),
                         tipo=str(tipo),
                         texto=self._texto(bruta, tipo),
+                        enviada_em=self._enviada_em(bruta),
                     )
                 )
 
         return mensagens
+
+    @staticmethod
+    def _enviada_em(bruta: dict) -> datetime | None:
+        """Instante que a Meta informa, em epoch de segundos.
+
+        E ele, e nao a hora em que gravamos, que ancora a janela de 24h: numa
+        reentrega atrasada a hora de gravacao esticaria a janela, e num
+        processamento fora de ordem ela andaria para tras.
+        """
+        bruto = bruta.get("timestamp")
+        if bruto is None:
+            return None
+        try:
+            return datetime.fromtimestamp(int(bruto), tz=UTC)
+        except (TypeError, ValueError, OSError, OverflowError):
+            logger.warning("Timestamp invalido na mensagem: %r", bruto)
+            return None
 
     @staticmethod
     def _nomes_por_telefone(valor: dict) -> dict[str, str]:
