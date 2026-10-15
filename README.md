@@ -31,9 +31,14 @@ idempotente e enfileira o processamento, que normaliza em contato, conversa e
 mensagem. Antes dela, a fatia 0 deixou o projeto de pe com `Tenant`,
 `Configuracao`, `Usuario` e o escopo por cliente no admin.
 
+Fatia 2a (borda de saida) entregue: envio de texto e de template pela fila,
+com a janela de 24h decidindo qual dos dois e permitido, retentativa que
+distingue falha transitoria de permanente, e canal em memoria para rodar sem
+tocar na Meta.
+
 Os apps `responder`, `catalogo`, `reservas` e `metricas` ainda estao vazios. A
-proxima fatia e a borda de saida: envio de texto e de template pela fila,
-respeitando a janela de 24h.
+proxima fatia e a 2b: callbacks de status (`sent`/`delivered`/`read`/`failed`),
+que hoje sao aceitos e descartados, e a categoria de cobranca que vem neles.
 
 Webhook em `POST /webhook/whatsapp/` (e `GET` para a verificacao da Meta).
 

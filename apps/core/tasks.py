@@ -3,8 +3,11 @@
 import logging
 
 from celery import shared_task
+from django.db import transaction
 
-from apps.conversas.models import EventoWebhook
+from apps.canal.base import ErroPermanente, ErroTransitorio
+from apps.canal.fabrica import canal_para
+from apps.conversas.models import EventoWebhook, Mensagem
 from apps.core.services import processar_evento
 
 logger = logging.getLogger(__name__)
@@ -26,3 +29,88 @@ def processar_inbound(evento_id: int) -> int:
         return 0
 
     return len(processar_evento(evento))
+
+
+@shared_task(
+    bind=True,
+    name="core.enviar_outbound",
+    autoretry_for=(ErroTransitorio,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=5,
+)
+def enviar_outbound(self, mensagem_id: int, idioma: str = "", variaveis=None) -> str | None:
+    """Entrega uma mensagem ja gravada ao canal e devolve o id da Meta.
+
+    Retenta so `ErroTransitorio`: repetir um numero invalido ou um template
+    reprovado queima cota e nunca passa, e nao repetir um 503 perde a
+    mensagem.
+    """
+    mensagem = _reservar(mensagem_id)
+    if mensagem is None:
+        return None
+
+    try:
+        # Fora de transacao de proposito: a chamada de rede nao pode segurar
+        # lock de linha, e o claim acima ja garantiu exclusividade.
+        id_externo = _entregar(mensagem, idioma, variaveis or [])
+    except ErroTransitorio:
+        # Volta para a fila de verdade: o status destravado deixa a proxima
+        # tentativa reservar de novo.
+        Mensagem.objects.filter(pk=mensagem.pk).update(status=Mensagem.Status.ENFILEIRADA)
+        raise
+    except ErroPermanente as erro:
+        logger.error("Envio da mensagem %s recusado em definitivo: %s", mensagem.pk, erro)
+        Mensagem.objects.filter(pk=mensagem.pk).update(
+            status=Mensagem.Status.FALHOU, erro=str(erro)
+        )
+        return None
+
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        status=Mensagem.Status.ENVIADA, id_externo=id_externo, erro=""
+    )
+    return id_externo
+
+
+def _reservar(mensagem_id: int) -> Mensagem | None:
+    """Pega a mensagem para si, ou desiste se outra execucao ja pegou."""
+    with transaction.atomic():
+        try:
+            mensagem = (
+                Mensagem.objects.select_for_update()
+                .select_related("conversa", "conversa__contato")
+                .get(pk=mensagem_id)
+            )
+        except Mensagem.DoesNotExist:
+            logger.error("Mensagem %s nao existe mais", mensagem_id)
+            return None
+
+        if mensagem.status != Mensagem.Status.ENFILEIRADA:
+            logger.info("Mensagem %s esta em %s, nada a enviar", mensagem_id, mensagem.status)
+            return None
+
+        mensagem.status = Mensagem.Status.ENVIANDO
+        mensagem.save(update_fields=["status", "atualizado_em"])
+        return mensagem
+
+
+def _entregar(mensagem: Mensagem, idioma: str, variaveis: list[str]) -> str:
+    configuracao = _configuracao(mensagem)
+    canal = canal_para(configuracao)
+    telefone = mensagem.conversa.contato.telefone
+
+    if mensagem.template:
+        return canal.enviar_template(telefone, mensagem.template, idioma or "pt_BR", variaveis)
+    return canal.enviar_texto(telefone, mensagem.texto)
+
+
+def _configuracao(mensagem: Mensagem):
+    from apps.tenants.models import Configuracao
+
+    try:
+        return Configuracao.objects.get(tenant_id=mensagem.tenant_id)
+    except Configuracao.DoesNotExist as erro:
+        # Permanente: sem configuracao nao ha para onde mandar, e repetir nao
+        # faz a configuracao aparecer.
+        raise ErroPermanente(f"cliente {mensagem.tenant_id} sem configuracao") from erro

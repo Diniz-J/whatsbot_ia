@@ -1,9 +1,4 @@
-"""Contrato do canal: o que a borda externa entrega para dentro.
-
-Nesta fatia o contrato cobre so a entrada. `enviar_texto` e `enviar_template`
-entram na fatia de saida, junto da implementacao que os honra — declarar agora
-um metodo abstrato sem implementacao seria deixar casca morta no caminho.
-"""
+"""Contrato do canal: o que a borda externa troca com o dominio."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -28,9 +23,43 @@ class MensagemEntrada:
     enviada_em: datetime | None
 
 
+class ErroCanal(Exception):
+    """Falha ao falar com o canal."""
+
+
+class ErroTransitorio(ErroCanal):
+    """Falha que vale retentar: timeout, 5xx, rate limit.
+
+    Separada de proposito do erro permanente: retentar um numero invalido
+    queima cota e nunca passa, e nao retentar um 503 perde a mensagem.
+    """
+
+
+class ErroPermanente(ErroCanal):
+    """Falha que nao melhora com retentativa: numero invalido, template
+    reprovado, token sem permissao."""
+
+
 class Canal(ABC):
     """Adaptador de um canal de mensagem."""
 
     @abstractmethod
     def normalizar_evento(self, payload: dict) -> list[MensagemEntrada]:
         """Traduz o payload cru do canal em mensagens de dominio."""
+
+    @abstractmethod
+    def enviar_texto(self, telefone: str, texto: str) -> str:
+        """Envia texto livre e devolve o id que o canal atribuiu.
+
+        So pode ser chamado com a janela de servico aberta; quem decide isso e
+        o servico de envio, nao o canal.
+        """
+
+    @abstractmethod
+    def enviar_template(
+        self, telefone: str, template: str, idioma: str, variaveis: list[str]
+    ) -> str:
+        """Envia template aprovado e devolve o id que o canal atribuiu.
+
+        E o unico caminho possivel fora da janela de 24h.
+        """

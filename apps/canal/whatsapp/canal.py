@@ -3,7 +3,10 @@
 import logging
 from datetime import UTC, datetime
 
-from apps.canal.base import Canal, MensagemEntrada
+from django.conf import settings
+
+from apps.canal.base import Canal, ErroPermanente, MensagemEntrada
+from apps.canal.whatsapp.client import ClienteGraph
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +39,65 @@ def phone_number_ids(payload: dict) -> set[str]:
 
 
 class CanalWhatsApp(Canal):
-    """Traduz o payload da Cloud API para o vocabulario do dominio."""
+    """Adaptador da Cloud API: traduz o payload de entrada e envia a saida.
+
+    A configuracao traz o numero e o token do cliente desta instancia. Ela e
+    opcional porque normalizar entrada nao precisa de credencial — o webhook
+    normaliza antes de resolver o cliente, para saber se ha mensagem na
+    entrega. Enviar sem configuracao e erro explicito, nao envio silencioso.
+    """
+
+    def __init__(self, configuracao=None):
+        self._configuracao = configuracao
+
+    def enviar_texto(self, telefone: str, texto: str) -> str:
+        return self._cliente().enviar(
+            {
+                "messaging_product": "whatsapp",
+                "to": telefone,
+                "type": "text",
+                "text": {"body": texto},
+            }
+        )
+
+    def enviar_template(
+        self, telefone: str, template: str, idioma: str, variaveis: list[str]
+    ) -> str:
+        componentes = []
+        if variaveis:
+            componentes.append(
+                {
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": v} for v in variaveis],
+                }
+            )
+        return self._cliente().enviar(
+            {
+                "messaging_product": "whatsapp",
+                "to": telefone,
+                "type": "template",
+                "template": {
+                    "name": template,
+                    "language": {"code": idioma},
+                    "components": componentes,
+                },
+            }
+        )
+
+    def _cliente(self) -> ClienteGraph:
+        configuracao = self._configuracao
+        if configuracao is None:
+            raise ErroPermanente("canal sem configuracao de cliente: nao da para enviar")
+        if not configuracao.whatsapp_phone_number_id or not configuracao.whatsapp_access_token:
+            raise ErroPermanente(
+                f"cliente {configuracao.tenant_id} sem numero ou token de WhatsApp"
+            )
+        return ClienteGraph(
+            phone_number_id=configuracao.whatsapp_phone_number_id,
+            token=configuracao.whatsapp_access_token,
+            versao=settings.WHATSAPP_API_VERSION,
+            timeout=settings.WHATSAPP_TIMEOUT,
+        )
 
     def normalizar_evento(self, payload: dict) -> list[MensagemEntrada]:
         """Extrai as mensagens de cliente de uma entrega do webhook.
