@@ -39,6 +39,9 @@ INSTALLED_APPS = [
     "rest_framework",
     "apps.common",
     "apps.tenants",
+    "apps.canal",
+    "apps.conversas",
+    "apps.core",
 ]
 
 MIDDLEWARE = [
@@ -113,6 +116,12 @@ if config("SECURE_SSL", default=False, cast=bool):
     SECURE_HSTS_PRELOAD = True
 
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
+
+# WhatsApp Cloud API. Isto e do app da Meta e vale para a instancia toda; o
+# numero e o token de cada cliente ficam no banco (DESIGN.md secao 8).
+WHATSAPP_APP_SECRET = config("WHATSAPP_APP_SECRET", default="")
+WHATSAPP_WEBHOOK_VERIFY_TOKEN = config("WHATSAPP_WEBHOOK_VERIFY_TOKEN", default="")
+WHATSAPP_API_VERSION = config("WHATSAPP_API_VERSION", default="v21.0")
 
 UNFOLD = {
     "SITE_TITLE": "whatsbot_ia",
