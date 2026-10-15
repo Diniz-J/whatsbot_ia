@@ -26,7 +26,7 @@ class MensagemInline(admin.TabularInline):
     model = Mensagem
     extra = 0
     can_delete = False
-    fields = ("criado_em", "direcao", "status", "tipo", "texto")
+    fields = ("criado_em", "direcao", "status", "tipo", "texto", "categoria_cobranca")
     readonly_fields = fields
 
     def has_add_permission(self, request, obj=None):

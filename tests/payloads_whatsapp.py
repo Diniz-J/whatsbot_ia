@@ -76,8 +76,33 @@ def payload_status_de_template(phone_number_id="111"):
     }
 
 
-def payload_status(phone_number_id="111", id_mensagem="wamid.SAIDA", status="delivered"):
-    """Entrega de status de envio, que chega na mesma URL."""
+def payload_status(
+    phone_number_id="111",
+    id_mensagem="wamid.SAIDA",
+    status="delivered",
+    timestamp=None,
+    categoria="service",
+    cobravel=True,
+    erro=None,
+):
+    """Entrega de status de envio, que chega na mesma URL das mensagens."""
+    if timestamp is None:
+        timestamp = int(time.time())
+    bruto = {
+        "id": id_mensagem,
+        "status": status,
+        "timestamp": str(timestamp),
+        "recipient_id": "5511999999999",
+    }
+    if categoria is not None:
+        bruto["pricing"] = {
+            "billable": cobravel,
+            "pricing_model": "CBP",
+            "category": categoria,
+        }
+    if erro is not None:
+        bruto["errors"] = [{"code": erro[0], "title": erro[1]}]
+
     return {
         "object": "whatsapp_business_account",
         "entry": [
@@ -89,13 +114,7 @@ def payload_status(phone_number_id="111", id_mensagem="wamid.SAIDA", status="del
                         "value": {
                             "messaging_product": "whatsapp",
                             "metadata": {"phone_number_id": phone_number_id},
-                            "statuses": [
-                                {
-                                    "id": id_mensagem,
-                                    "status": status,
-                                    "recipient_id": "5511999999999",
-                                }
-                            ],
+                            "statuses": [bruto],
                         },
                     }
                 ],

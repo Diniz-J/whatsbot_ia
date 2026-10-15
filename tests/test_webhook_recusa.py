@@ -93,3 +93,36 @@ def test_cliente_inativo_e_recusado(client, restaurante):
 
     assert resposta.status_code == 403
     assert not EventoWebhook.objects.exists()
+
+
+def test_status_de_numero_desconhecido_e_aceito_sem_efeito(client, restaurante):
+    """So status, de numero que nao e desta instancia: nada a atualizar, e
+    403 renderia retentativa por dias por nada."""
+    from tests.payloads_whatsapp import payload_status
+
+    corpo, assinatura = corpo_e_assinatura(payload_status(phone_number_id="999"))
+
+    resposta = client.post(
+        URL,
+        data=corpo,
+        content_type="application/json",
+        headers={"X-Hub-Signature-256": assinatura},
+    )
+
+    assert resposta.status_code == 200
+    assert not Mensagem.objects.exists()
+
+
+def test_mensagem_de_numero_desconhecido_continua_recusada(client, restaurante):
+    """Status e tolerado, mensagem nao: injetar conversa alheia e o risco."""
+    corpo, assinatura = corpo_e_assinatura(payload_mensagem(phone_number_id="999"))
+
+    resposta = client.post(
+        URL,
+        data=corpo,
+        content_type="application/json",
+        headers={"X-Hub-Signature-256": assinatura},
+    )
+
+    assert resposta.status_code == 403
+    assert not EventoWebhook.objects.exists()
