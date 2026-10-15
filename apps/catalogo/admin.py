@@ -55,6 +55,19 @@ class ItemAdmin(TenantScopedModelAdmin):
     search_fields = ("nome", "descricao")
     autocomplete_fields = ("categoria",)
 
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """Restringe a categoria ao proprio cliente.
+
+        Sem isto, o escopo do item fica so na borda: o `save_model` grava o
+        item no tenant do usuario, mas a categoria vem do formulario, e um
+        POST forjado com a categoria do vizinho gravaria um item cruzando o
+        escopo. Limitar o queryset do campo rejeita isso na validacao e, de
+        quebra, deixa o autocomplete so com as categorias do cliente.
+        """
+        if db_field.name == "categoria" and not request.user.is_superuser:
+            kwargs["queryset"] = Categoria.objects.filter(tenant_id=request.user.tenant_id)
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
 
 @admin.register(HorarioFuncionamento)
 class HorarioFuncionamentoAdmin(TenantScopedModelAdmin):

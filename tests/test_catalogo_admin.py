@@ -82,6 +82,69 @@ def test_cliente_nao_ve_o_catalogo_do_vizinho(client, usuario_restaurante, clini
     assert detalhe.status_code == 302
 
 
+@pytest.mark.django_db
+def test_item_criado_direto_pelo_admin_herda_o_cliente(client, usuario_restaurante):
+    """Fora do inline, pela tela do proprio Item: o `tenant` tambem e do
+    servidor, nunca do formulario."""
+    categoria = Categoria.objects.create(tenant=usuario_restaurante.tenant, nome="Pratos")
+    usuario_restaurante.user_permissions.add(*_permissoes("add_item", "view_item"))
+    client.force_login(usuario_restaurante)
+
+    resposta = client.post(
+        "/painel/catalogo/item/add/",
+        {
+            "categoria": categoria.pk,
+            "nome": "Picanha",
+            "descricao": "",
+            "preco": "89.90",
+            "disponivel": "on",
+            "ordem": "0",
+        },
+    )
+
+    assert resposta.status_code == 302
+    item = Item.objects.get()
+    assert item.tenant_id == usuario_restaurante.tenant_id
+
+
+@pytest.mark.django_db
+def test_item_nao_aceita_categoria_de_outro_cliente(client, usuario_restaurante, clinica):
+    """O `tenant` do item e do servidor, mas a categoria vem do formulario: sem
+    escopar o campo, um POST forjado gravaria o item na categoria do vizinho."""
+    categoria_alheia = Categoria.objects.create(tenant=clinica, nome="Consultas")
+    usuario_restaurante.user_permissions.add(*_permissoes("add_item", "view_item"))
+    client.force_login(usuario_restaurante)
+
+    resposta = client.post(
+        "/painel/catalogo/item/add/",
+        {
+            "categoria": categoria_alheia.pk,
+            "nome": "Item cruzado",
+            "descricao": "",
+            "preco": "10.00",
+            "disponivel": "on",
+            "ordem": "0",
+        },
+    )
+
+    # Form invalido re-renderiza (200), nao redireciona, e nada e gravado.
+    assert resposta.status_code == 200
+    assert not Item.objects.exists()
+
+
+@pytest.mark.django_db
+def test_mesmo_nome_em_categorias_diferentes_e_permitido(restaurante):
+    """A unicidade e por categoria, nao no cardapio inteiro: o mesmo nome em
+    categorias diferentes do mesmo cliente e legitimo."""
+    promocoes = Categoria.objects.create(tenant=restaurante, nome="Promocoes")
+    almoco = Categoria.objects.create(tenant=restaurante, nome="Almoco")
+
+    Item.objects.create(tenant=restaurante, categoria=promocoes, nome="Combo")
+    Item.objects.create(tenant=restaurante, categoria=almoco, nome="Combo")
+
+    assert Item.objects.filter(nome="Combo").count() == 2
+
+
 def _permissoes(*codenames):
     from django.contrib.auth.models import Permission
 
