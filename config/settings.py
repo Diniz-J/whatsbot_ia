@@ -122,6 +122,10 @@ CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
 WHATSAPP_APP_SECRET = config("WHATSAPP_APP_SECRET", default="")
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = config("WHATSAPP_WEBHOOK_VERIFY_TOKEN", default="")
 WHATSAPP_API_VERSION = config("WHATSAPP_API_VERSION", default="v21.0")
+WHATSAPP_TIMEOUT = config("WHATSAPP_TIMEOUT", default=10.0, cast=float)
+# Em desenvolvimento, nao falar com a Meta de verdade. A suite usa canal
+# falso injetado pelo teste, entao isto fica desligado nela.
+CANAL_EM_MEMORIA = config("CANAL_EM_MEMORIA", default=False, cast=bool)
 
 UNFOLD = {
     "SITE_TITLE": "whatsbot_ia",
