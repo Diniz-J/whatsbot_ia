@@ -127,6 +127,20 @@ WHATSAPP_TIMEOUT = config("WHATSAPP_TIMEOUT", default=10.0, cast=float)
 # falso injetado pelo teste, entao isto fica desligado nela.
 CANAL_EM_MEMORIA = config("CANAL_EM_MEMORIA", default=False, cast=bool)
 
+# Quanto tempo num estado nao-final conta como travado. Generoso porque o
+# timeout de envio e de segundos: o que passa disto nao esta em voo.
+ENVIO_TRAVADO_MINUTOS = config("ENVIO_TRAVADO_MINUTOS", default=15, cast=int)
+INBOUND_TRAVADO_MINUTOS = config("INBOUND_TRAVADO_MINUTOS", default=5, cast=int)
+
+# A varredura so roda se houver um processo `celery beat` no ar. Sem ele, o
+# agendamento abaixo e inerte e o destravamento nao acontece — ver DEPLOY.
+CELERY_BEAT_SCHEDULE = {
+    "varrer-pendentes": {
+        "task": "core.varrer_pendentes",
+        "schedule": config("VARREDURA_SEGUNDOS", default=300, cast=int),
+    },
+}
+
 UNFOLD = {
     "SITE_TITLE": "whatsbot_ia",
     "SITE_HEADER": "whatsbot_ia",
