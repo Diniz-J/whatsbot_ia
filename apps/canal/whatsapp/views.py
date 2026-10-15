@@ -13,7 +13,7 @@ from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbid
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from apps.canal.whatsapp.assinatura import assinatura_valida
+from apps.canal.whatsapp.assinatura import assinatura_valida, token_valido
 from apps.canal.whatsapp.canal import CanalWhatsApp, phone_number_ids
 from apps.conversas.models import EventoWebhook
 from apps.core.tasks import processar_inbound
@@ -39,9 +39,9 @@ def _verificar(request):
     if request.GET.get("hub.mode") != "subscribe":
         return HttpResponseForbidden("modo invalido")
 
-    token = request.GET.get("hub.verify_token")
-    esperado = settings.WHATSAPP_WEBHOOK_VERIFY_TOKEN
-    if not esperado or token != esperado:
+    if not token_valido(
+        request.GET.get("hub.verify_token"), settings.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+    ):
         logger.warning("Verificacao de webhook recusada: token invalido")
         return HttpResponseForbidden("token invalido")
 
@@ -69,36 +69,53 @@ def _receber(request):
     if not isinstance(payload, dict):
         return HttpResponseBadRequest("json invalido")
 
+    mensagens = CanalWhatsApp().normalizar_evento(payload)
+    if not mensagens:
+        # Status de envio, aprovacao de template, mudanca de qualidade do
+        # numero: a Meta manda tudo nesta mesma URL. Nada a processar aqui, e
+        # recusar faria ela retentar por dias e desativar a subscription.
+        logger.debug("Entrega sem mensagem de cliente, nada a processar")
+        return HttpResponse(status=200)
+
     configuracao = _configuracao_do_destinatario(payload)
     if configuracao is None:
         # Invariante 3: a assinatura prova que veio da Meta, nao que era para
         # este cliente. O app secret e o mesmo em todas as instancias, entao
         # sem esta conferencia quem soubesse a URL injetaria conversa de
         # outro numero.
-        logger.warning("Entrega recusada: numero nao pertence a esta instancia")
         return HttpResponseForbidden("destinatario desconhecido")
 
-    _gravar_e_enfileirar(configuracao.tenant_id, payload)
+    _gravar_e_enfileirar(configuracao.tenant_id, payload, mensagens)
     return HttpResponse(status=200)
 
 
 def _configuracao_do_destinatario(payload: dict) -> Configuracao | None:
     """Casa o numero da entrega com o cliente desta instancia.
 
-    Entrega com mais de um numero, ou com numero que nao e o configurado, nao
-    e desta instancia: uma instancia atende um cliente (DESIGN.md secao 8).
+    Entrega com mais de um numero nao e desta instancia: uma instancia atende
+    um cliente (DESIGN.md secao 8).
     """
     numeros = phone_number_ids(payload)
     if len(numeros) != 1:
+        logger.warning("Entrega recusada: %s numeros de destino", len(numeros))
         return None
-    return (
+
+    configuracao = (
         Configuracao.objects.filter(whatsapp_phone_number_id=numeros.pop())
         .select_related("tenant")
         .first()
     )
+    if configuracao is None:
+        logger.warning("Entrega recusada: numero nao pertence a esta instancia")
+        return None
+    if not configuracao.tenant.ativo:
+        # Cliente desativado para de ser atendido; o historico fica no banco.
+        logger.warning("Entrega recusada: cliente %s inativo", configuracao.tenant_id)
+        return None
+    return configuracao
 
 
-def _gravar_e_enfileirar(tenant_id: int, payload: dict) -> None:
+def _gravar_e_enfileirar(tenant_id: int, payload: dict, mensagens) -> None:
     """Grava cada mensagem da entrega e enfileira o processamento.
 
     O `get_or_create` no id da mensagem e o que torna o reenvio da Meta um
@@ -106,13 +123,19 @@ def _gravar_e_enfileirar(tenant_id: int, payload: dict) -> None:
     nunca procurar uma linha que a transacao ainda nao confirmou.
     """
     with transaction.atomic():
-        for entrada in CanalWhatsApp().normalizar_evento(payload):
+        for entrada in mensagens:
             evento, criado = EventoWebhook.objects.get_or_create(
                 tenant_id=tenant_id,
                 id_mensagem=entrada.id_externo,
                 defaults={"payload": payload},
             )
-            if not criado:
+            if not criado and evento.processado_em is not None:
                 logger.info("Entrega repetida ignorada: %s", entrada.id_externo)
                 continue
+            if not criado:
+                # Evento gravado mas nunca processado: o enfileiramento
+                # anterior se perdeu (broker fora do ar no on_commit, worker
+                # morto antes de rodar). A reentrega da Meta e a chance de
+                # recuperar, entao enfileira de novo em vez de descartar.
+                logger.warning("Reenfileirando evento nao processado: %s", entrada.id_externo)
             transaction.on_commit(lambda evento_id=evento.pk: processar_inbound.delay(evento_id))

@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import time
 
 SEGREDO = "segredo-de-teste"
 
@@ -14,9 +15,17 @@ def payload_mensagem(
     texto="oi, qual o horario de voces?",
     nome="Ze",
     tipo="text",
+    timestamp=None,
 ):
-    """Entrega de mensagem de cliente, no formato aninhado da Cloud API."""
-    bruta = {"from": telefone, "id": id_mensagem, "timestamp": "1760000000", "type": tipo}
+    """Entrega de mensagem de cliente, no formato aninhado da Cloud API.
+
+    O timestamp vale agora por default porque e dele que sai a janela de 24h:
+    um valor fixo no passado deixaria a janela fechada e faria o teste de
+    janela aberta passar ou falhar por motivo errado.
+    """
+    if timestamp is None:
+        timestamp = int(time.time())
+    bruta = {"from": telefone, "id": id_mensagem, "timestamp": str(timestamp), "type": tipo}
     if tipo == "text":
         bruta["text"] = {"body": texto}
 
@@ -36,6 +45,29 @@ def payload_mensagem(
                             },
                             "contacts": [{"profile": {"name": nome}, "wa_id": telefone}],
                             "messages": [bruta],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def payload_status_de_template(phone_number_id="111"):
+    """Aprovacao de template: chega na mesma URL e nao tem `metadata`."""
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "WABA",
+                "changes": [
+                    {
+                        "field": "message_template_status_update",
+                        "value": {
+                            "event": "APPROVED",
+                            "message_template_id": 123,
+                            "message_template_name": "confirmacao_reserva",
+                            "message_template_language": "pt_BR",
                         },
                     }
                 ],
