@@ -44,9 +44,13 @@ que morreu, entrega gravada cujo enfileiramento se perdeu).
 A varredura precisa de um processo `celery beat` no ar; sem ele o agendamento
 e inerte.
 
-Os apps `responder`, `catalogo`, `reservas` e `metricas` ainda estao vazios. A
-proxima frente e a de dados (catalogo e horario) e, em cima dela, o
-`RuleResponder`.
+Catalogo entregue: cardapio por categoria, preco, disponibilidade e horario
+de funcionamento (inclusive faixa que passa da meia-noite), com back-office
+em que o dono do negocio edita tudo. `catalogo/services.py` e a fonte unica
+dessas respostas — e o que o invariante 2 exige.
+
+Os apps `responder`, `reservas` e `metricas` ainda estao vazios. A proxima
+fatia e o `RuleResponder`, consumindo esses servicos.
 
 Webhook em `POST /webhook/whatsapp/` (e `GET` para a verificacao da Meta).
 
