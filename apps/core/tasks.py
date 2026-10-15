@@ -1,9 +1,12 @@
 """Tarefas do Celery. Todo processamento sai da request e passa por aqui."""
 
 import logging
+from datetime import timedelta
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from apps.canal.base import ErroPermanente, ErroTransitorio
 from apps.canal.fabrica import canal_para
@@ -114,3 +117,59 @@ def _configuracao(mensagem: Mensagem):
         # Permanente: sem configuracao nao ha para onde mandar, e repetir nao
         # faz a configuracao aparecer.
         raise ErroPermanente(f"cliente {mensagem.tenant_id} sem configuracao") from erro
+
+
+@shared_task(name="core.varrer_pendentes")
+def varrer_pendentes() -> dict[str, int]:
+    """Recupera o que ficou preso num estado nao-final.
+
+    Duas coisas travam sem isto, e as duas sao perda silenciosa:
+
+    - Mensagem reservada (`enviando`) cujo worker morreu antes da resposta.
+      Ninguem mais a reclama, porque o claim justamente impede isso.
+    - Entrega gravada que nunca foi processada, quando o enfileiramento se
+      perdeu e a Meta nao reenviou.
+
+    O limite de tempo e generoso de proposito: o timeout de envio e de
+    segundos, entao uma mensagem em `enviando` por mais de alguns minutos nao
+    esta em voo. Mesmo assim, reenviar uma cuja resposta se perdeu pode
+    duplicar — e o preco de entrega ao menos uma vez, e e menor que a
+    mensagem nunca sair.
+    """
+    agora = timezone.now()
+    reenfileiradas = _destravar_envios(agora)
+    reprocessados = _reprocessar_entregas(agora)
+
+    if reenfileiradas or reprocessados:
+        logger.warning(
+            "Varredura destravou %s envio(s) e %s entrega(s)", reenfileiradas, reprocessados
+        )
+    return {"envios": reenfileiradas, "entregas": reprocessados}
+
+
+def _destravar_envios(agora) -> int:
+    limite = agora - timedelta(minutes=settings.ENVIO_TRAVADO_MINUTOS)
+    travadas = list(
+        Mensagem.objects.filter(
+            status=Mensagem.Status.ENVIANDO, atualizado_em__lt=limite
+        ).values_list("pk", flat=True)
+    )
+    if not travadas:
+        return 0
+
+    Mensagem.objects.filter(pk__in=travadas).update(status=Mensagem.Status.ENFILEIRADA)
+    for mensagem_id in travadas:
+        enviar_outbound.delay(mensagem_id)
+    return len(travadas)
+
+
+def _reprocessar_entregas(agora) -> int:
+    limite = agora - timedelta(minutes=settings.INBOUND_TRAVADO_MINUTOS)
+    pendentes = list(
+        EventoWebhook.objects.filter(processado_em__isnull=True, criado_em__lt=limite).values_list(
+            "pk", flat=True
+        )
+    )
+    for evento_id in pendentes:
+        processar_inbound.delay(evento_id)
+    return len(pendentes)

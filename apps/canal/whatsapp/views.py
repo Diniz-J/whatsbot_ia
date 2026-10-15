@@ -16,6 +16,7 @@ from django.views.decorators.http import require_http_methods
 from apps.canal.whatsapp.assinatura import assinatura_valida, token_valido
 from apps.canal.whatsapp.canal import CanalWhatsApp, phone_number_ids
 from apps.conversas.models import EventoWebhook
+from apps.core.status import aplicar_status
 from apps.core.tasks import processar_inbound
 from apps.tenants.models import Configuracao
 
@@ -69,23 +70,32 @@ def _receber(request):
     if not isinstance(payload, dict):
         return HttpResponseBadRequest("json invalido")
 
-    mensagens = CanalWhatsApp().normalizar_evento(payload)
-    if not mensagens:
-        # Status de envio, aprovacao de template, mudanca de qualidade do
-        # numero: a Meta manda tudo nesta mesma URL. Nada a processar aqui, e
+    canal = CanalWhatsApp()
+    mensagens = canal.normalizar_evento(payload)
+    status = canal.normalizar_status(payload)
+    if not mensagens and not status:
+        # Aprovacao de template, mudanca de qualidade do numero, atualizacao
+        # de conta: a Meta manda tudo nesta mesma URL. Nada a processar, e
         # recusar faria ela retentar por dias e desativar a subscription.
-        logger.debug("Entrega sem mensagem de cliente, nada a processar")
+        logger.debug("Entrega sem mensagem nem status, nada a processar")
         return HttpResponse(status=200)
 
     configuracao = _configuracao_do_destinatario(payload)
     if configuracao is None:
+        if not mensagens:
+            # So status, e de numero que nao e desta instancia: nada a
+            # atualizar, e 403 renderia retentativa por dias por nada.
+            return HttpResponse(status=200)
         # Invariante 3: a assinatura prova que veio da Meta, nao que era para
         # este cliente. O app secret e o mesmo em todas as instancias, entao
         # sem esta conferencia quem soubesse a URL injetaria conversa de
         # outro numero.
         return HttpResponseForbidden("destinatario desconhecido")
 
-    _gravar_e_enfileirar(configuracao.tenant_id, payload, mensagens)
+    if status:
+        aplicar_status(configuracao.tenant_id, status)
+    if mensagens:
+        _gravar_e_enfileirar(configuracao.tenant_id, payload, mensagens)
     return HttpResponse(status=200)
 
 

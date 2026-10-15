@@ -36,9 +36,17 @@ com a janela de 24h decidindo qual dos dois e permitido, retentativa que
 distingue falha transitoria de permanente, e canal em memoria para rodar sem
 tocar na Meta.
 
+Fatia 2b entregue: os callbacks de status (`sent`/`delivered`/`read`/`failed`)
+atualizam a mensagem, a categoria de cobranca que a Meta informa fica gravada
+nela, e uma varredura destrava o que ficou preso (envio reservado por worker
+que morreu, entrega gravada cujo enfileiramento se perdeu).
+
+A varredura precisa de um processo `celery beat` no ar; sem ele o agendamento
+e inerte.
+
 Os apps `responder`, `catalogo`, `reservas` e `metricas` ainda estao vazios. A
-proxima fatia e a 2b: callbacks de status (`sent`/`delivered`/`read`/`failed`),
-que hoje sao aceitos e descartados, e a categoria de cobranca que vem neles.
+proxima frente e a de dados (catalogo e horario) e, em cima dela, o
+`RuleResponder`.
 
 Webhook em `POST /webhook/whatsapp/` (e `GET` para a verificacao da Meta).
 

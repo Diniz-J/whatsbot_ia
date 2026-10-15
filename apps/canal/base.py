@@ -23,6 +23,23 @@ class MensagemEntrada:
     enviada_em: datetime | None
 
 
+@dataclass(frozen=True)
+class StatusEntrega:
+    """O que o canal reporta sobre uma mensagem que nos mandamos.
+
+    `categoria` e `cobravel` vem do bloco de preco da Meta e sao a base do
+    custo: desde jul/2025 a cobranca e por mensagem entregue, e a categoria
+    (service, utility, marketing, authentication) e quem define o preco.
+    """
+
+    id_externo: str
+    status: str
+    momento: datetime | None
+    erro: str
+    categoria: str
+    cobravel: bool | None
+
+
 class ErroCanal(Exception):
     """Falha ao falar com o canal."""
 
@@ -46,6 +63,10 @@ class Canal(ABC):
     @abstractmethod
     def normalizar_evento(self, payload: dict) -> list[MensagemEntrada]:
         """Traduz o payload cru do canal em mensagens de dominio."""
+
+    @abstractmethod
+    def normalizar_status(self, payload: dict) -> list[StatusEntrega]:
+        """Traduz o que o canal reporta sobre mensagens que ja enviamos."""
 
     @abstractmethod
     def enviar_texto(self, telefone: str, texto: str) -> str:

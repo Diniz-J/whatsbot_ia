@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 from django.conf import settings
 
-from apps.canal.base import Canal, ErroPermanente, MensagemEntrada
+from apps.canal.base import Canal, ErroPermanente, MensagemEntrada, StatusEntrega
 from apps.canal.whatsapp.client import ClienteGraph
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,22 @@ def _valores(payload: dict):
             valor = mudanca.get("value")
             if isinstance(valor, dict):
                 yield valor
+
+
+def _instante(bruto) -> datetime | None:
+    """Epoch de segundos da Meta em datetime consciente de fuso.
+
+    E ele, e nao a hora em que gravamos, que ancora a janela de 24h: numa
+    reentrega atrasada a hora de gravacao esticaria a janela, e num
+    processamento fora de ordem ela andaria para tras.
+    """
+    if bruto is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(bruto), tz=UTC)
+    except (TypeError, ValueError, OSError, OverflowError):
+        logger.warning("Timestamp invalido no payload: %r", bruto)
+        return None
 
 
 def phone_number_ids(payload: dict) -> set[str]:
@@ -84,6 +100,50 @@ class CanalWhatsApp(Canal):
             }
         )
 
+    def normalizar_status(self, payload: dict) -> list[StatusEntrega]:
+        """Extrai os status de envio de uma entrega do webhook.
+
+        Chegam na mesma URL das mensagens de cliente, em `statuses[]`. Status
+        sem id e descartado: o id e o unico jeito de achar a mensagem.
+        """
+        status = []
+        for valor in _valores(payload):
+            for bruto in valor.get("statuses") or []:
+                if not isinstance(bruto, dict):
+                    continue
+                id_externo = bruto.get("id")
+                nome = bruto.get("status")
+                if not id_externo or not nome:
+                    logger.warning("Status sem id ou sem nome descartado")
+                    continue
+                preco = bruto.get("pricing") if isinstance(bruto.get("pricing"), dict) else {}
+                status.append(
+                    StatusEntrega(
+                        id_externo=str(id_externo),
+                        status=str(nome),
+                        momento=_instante(bruto.get("timestamp")),
+                        erro=self._erro(bruto),
+                        categoria=str(preco.get("category") or ""),
+                        cobravel=preco.get("billable") if "billable" in preco else None,
+                    )
+                )
+        return status
+
+    @staticmethod
+    def _erro(bruto: dict) -> str:
+        """Motivo da falha, quando o status e `failed`.
+
+        Guardado como texto porque o que interessa e a pessoa que le a
+        conversa entender por que nao chegou, nao o codigo em si.
+        """
+        erros = bruto.get("errors")
+        if not isinstance(erros, list) or not erros:
+            return ""
+        primeiro = erros[0]
+        if not isinstance(primeiro, dict):
+            return ""
+        return f"{primeiro.get('code')} {primeiro.get('title') or primeiro.get('message')}".strip()
+
     def _cliente(self) -> ClienteGraph:
         configuracao = self._configuracao
         if configuracao is None:
@@ -128,28 +188,11 @@ class CanalWhatsApp(Canal):
                         nome_perfil=nomes.get(str(telefone), ""),
                         tipo=str(tipo),
                         texto=self._texto(bruta, tipo),
-                        enviada_em=self._enviada_em(bruta),
+                        enviada_em=_instante(bruta.get("timestamp")),
                     )
                 )
 
         return mensagens
-
-    @staticmethod
-    def _enviada_em(bruta: dict) -> datetime | None:
-        """Instante que a Meta informa, em epoch de segundos.
-
-        E ele, e nao a hora em que gravamos, que ancora a janela de 24h: numa
-        reentrega atrasada a hora de gravacao esticaria a janela, e num
-        processamento fora de ordem ela andaria para tras.
-        """
-        bruto = bruta.get("timestamp")
-        if bruto is None:
-            return None
-        try:
-            return datetime.fromtimestamp(int(bruto), tz=UTC)
-        except (TypeError, ValueError, OSError, OverflowError):
-            logger.warning("Timestamp invalido na mensagem: %r", bruto)
-            return None
 
     @staticmethod
     def _nomes_por_telefone(valor: dict) -> dict[str, str]:

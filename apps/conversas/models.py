@@ -68,6 +68,20 @@ class Conversa(BaseModelTenant):
         return (agora or timezone.now()) - self.ultima_entrada_em < JANELA_SERVICO
 
 
+class CategoriaCobranca(models.TextChoices):
+    """Categorias que a Meta usa para precificar a mensagem entregue.
+
+    Quem decide e ela, no momento da entrega: nao da para rotular promocao
+    como utility para pagar menos. Guardamos o que ela reportou porque e a
+    base do custo e, por consequencia, da margem.
+    """
+
+    SERVICE = "service", "Service (resposta na janela de 24h)"
+    UTILITY = "utility", "Utility (transacional)"
+    MARKETING = "marketing", "Marketing (promocional)"
+    AUTHENTICATION = "authentication", "Authentication"
+
+
 class Mensagem(BaseModelTenant):
     """Uma mensagem do fio, em qualquer direcao."""
 
@@ -90,6 +104,8 @@ class Mensagem(BaseModelTenant):
         # template e cobrado, e o cliente receberia em dobro.
         ENVIANDO = "enviando", "Enviando"
         ENVIADA = "enviada", "Enviada"
+        ENTREGUE = "entregue", "Entregue"
+        LIDA = "lida", "Lida"
         FALHOU = "falhou", "Falhou"
 
     # CASCADE por design: a mensagem e filha da conversa e nao faz sentido
@@ -109,6 +125,20 @@ class Mensagem(BaseModelTenant):
     texto = models.TextField("texto", blank=True)
     template = models.CharField("template", max_length=120, blank=True)
     erro = models.TextField("erro do envio", blank=True)
+    status_em = models.DateTimeField(
+        "status reportado em",
+        null=True,
+        blank=True,
+        help_text="Instante do ultimo status, segundo a Meta.",
+    )
+    categoria_cobranca = models.CharField(
+        "categoria de cobranca",
+        max_length=20,
+        choices=CategoriaCobranca.choices,
+        blank=True,
+        help_text="Definida pela Meta na entrega; define o preco da mensagem.",
+    )
+    cobravel = models.BooleanField("cobravel", null=True, blank=True)
 
     class Meta:
         verbose_name = "mensagem"

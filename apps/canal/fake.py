@@ -7,7 +7,13 @@ HTTP que ninguem quer fazer na suite.
 
 import itertools
 
-from apps.canal.base import Canal, ErroPermanente, ErroTransitorio, MensagemEntrada
+from apps.canal.base import (
+    Canal,
+    ErroPermanente,
+    ErroTransitorio,
+    MensagemEntrada,
+    StatusEntrega,
+)
 
 
 class CanalFake(Canal):
@@ -23,6 +29,11 @@ class CanalFake(Canal):
 
         # O formato de entrada continua sendo o da Meta; so o envio e fingido.
         return CanalWhatsApp().normalizar_evento(payload)
+
+    def normalizar_status(self, payload: dict) -> list[StatusEntrega]:
+        from apps.canal.whatsapp.canal import CanalWhatsApp
+
+        return CanalWhatsApp().normalizar_status(payload)
 
     def enviar_texto(self, telefone: str, texto: str) -> str:
         return self._registrar({"tipo": "texto", "telefone": telefone, "texto": texto})
