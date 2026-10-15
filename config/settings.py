@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.common",
     "apps.tenants",
     "apps.canal",
+    "apps.catalogo",
     "apps.conversas",
     "apps.core",
 ]

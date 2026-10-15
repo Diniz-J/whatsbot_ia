@@ -26,6 +26,12 @@ def test_login_renderiza(client):
         "/painel/conversas/contato/",
         "/painel/conversas/conversa/",
         "/painel/conversas/eventowebhook/",
+        "/painel/catalogo/categoria/",
+        "/painel/catalogo/categoria/add/",
+        "/painel/catalogo/item/",
+        "/painel/catalogo/item/add/",
+        "/painel/catalogo/horariofuncionamento/",
+        "/painel/catalogo/horariofuncionamento/add/",
     ],
 )
 def test_telas_da_operacao_renderizam(client, operacao, rota):
