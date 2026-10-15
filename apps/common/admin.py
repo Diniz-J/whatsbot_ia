@@ -1,6 +1,6 @@
 """Bases de admin compartilhadas: escopo por cliente e area so da operacao."""
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import FieldDoesNotExist, PermissionDenied
 from unfold.admin import ModelAdmin
 
 
@@ -60,3 +60,39 @@ class TenantScopedModelAdmin(ModelAdmin):
                 raise PermissionDenied("Usuario sem cliente nao pode gravar.")
             setattr(obj, f"{self.campo_tenant}_id", request.user.tenant_id)
         super().save_model(request, obj, form, change)
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """Restringe toda FK para modelo escopado ao cliente do usuario.
+
+        O `save_model` acima resolve o escopo do registro que se grava, mas
+        nao o do que ele referencia: a FK vem do formulario, e um POST
+        forjado com o id de uma linha do vizinho criaria um registro que
+        atravessa o escopo. Limitar o queryset do campo recusa isso na
+        validacao e, de quebra, deixa o autocomplete so com o que e do
+        cliente.
+
+        Generico de proposito. Resolvido campo a campo, cada admin novo com
+        FK nasce com o furo outra vez e a protecao passa a depender de
+        alguem lembrar.
+        """
+        if not request.user.is_superuser and _escopado_por_tenant(db_field.remote_field.model):
+            # Sem cliente definido o queryset fica vazio, nao global: mesma
+            # falha fechada do `get_queryset`.
+            kwargs["queryset"] = db_field.remote_field.model._default_manager.filter(
+                tenant_id=request.user.tenant_id
+            )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+def _escopado_por_tenant(modelo) -> bool:
+    """Se o modelo tem dono, e portanto nao pode ser referenciado cruzando escopo.
+
+    Checa o campo e nao a heranca de `BaseModelTenant` de proposito: o
+    `Usuario` tambem tem `tenant` sem herdar dela, e uma FK para ele sofre do
+    mesmo problema.
+    """
+    try:
+        modelo._meta.get_field("tenant")
+    except FieldDoesNotExist:
+        return False
+    return True
