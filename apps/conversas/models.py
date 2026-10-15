@@ -51,6 +51,12 @@ class Conversa(BaseModelTenant):
         verbose_name = "conversa"
         verbose_name_plural = "conversas"
         ordering = ["-ultima_entrada_em"]
+        constraints = [
+            # Uma conversa por contato. Sem isto, duas tarefas da mesma
+            # entrega inserem duplicata e todo `get_or_create` seguinte passa
+            # a levantar MultipleObjectsReturned, para sempre.
+            models.UniqueConstraint(fields=["tenant", "contato"], name="conversa_unica_por_contato")
+        ]
 
     def __str__(self):
         return f"Conversa com {self.contato}"
@@ -86,6 +92,16 @@ class Mensagem(BaseModelTenant):
         verbose_name = "mensagem"
         verbose_name_plural = "mensagens"
         ordering = ["criado_em"]
+        constraints = [
+            # Garantia de nao duplicar no banco, e nao so no servico. Parcial
+            # porque mensagem de saida nasce sem id da Meta, e varias string
+            # vazia colidiriam num unique comum.
+            models.UniqueConstraint(
+                fields=["tenant", "id_externo"],
+                condition=~models.Q(id_externo=""),
+                name="mensagem_unica_por_id_externo",
+            )
+        ]
 
     def __str__(self):
         return f"{self.get_direcao_display()}: {self.texto[:40]}"
