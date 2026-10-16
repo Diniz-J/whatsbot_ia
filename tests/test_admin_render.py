@@ -34,6 +34,10 @@ def test_login_renderiza(client):
         "/painel/catalogo/horariofuncionamento/add/",
         "/painel/metricas/tabelapreco/",
         "/painel/metricas/tabelapreco/add/",
+        "/painel/reservas/mesa/",
+        "/painel/reservas/mesa/add/",
+        "/painel/reservas/reserva/",
+        "/painel/reservas/reserva/add/",
     ],
 )
 def test_telas_da_operacao_renderizam(client, operacao, rota):
