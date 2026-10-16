@@ -131,6 +131,17 @@ WHATSAPP_TIMEOUT = config("WHATSAPP_TIMEOUT", default=10.0, cast=float)
 # cobrada. Quem precisa afirmar sobre o envio injeta o proprio canal falso.
 CANAL_EM_MEMORIA = config("CANAL_EM_MEMORIA", default=TESTING, cast=bool)
 
+# Atendimento hibrido. O modelo default e Haiku porque o token e a margem do
+# plano: um atendimento que custa mais que a mensalidade nao fecha a conta.
+# Em teste a chave nasce vazia, nao importa o ambiente: um teste que esqueca
+# de injetar o cliente falso cai no fallback de regra em vez de fazer uma
+# chamada cobrada. Quem precisa dela injeta via `settings`.
+ANTHROPIC_API_KEY = "" if TESTING else config("ANTHROPIC_API_KEY", default="")
+LLM_MODEL = config("LLM_MODEL", default="claude-haiku-5-5")
+LLM_EFFORT = config("LLM_EFFORT", default="low")
+LLM_MAX_TOKENS = config("LLM_MAX_TOKENS", default=1024, cast=int)
+LLM_TIMEOUT = config("LLM_TIMEOUT", default=30.0, cast=float)
+
 # Quanto tempo num estado nao-final conta como travado. Generoso porque o
 # timeout de envio e de segundos: o que passa disto nao esta em voo.
 ENVIO_TRAVADO_MINUTOS = config("ENVIO_TRAVADO_MINUTOS", default=15, cast=int)

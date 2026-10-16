@@ -54,9 +54,19 @@ cardapio, preco de item, horario de funcionamento e fallback que oferece
 gente. Tudo que ele afirma sai de `catalogo/services.py`; nada e inventado.
 Item sem preco cadastrado recebe "nao tenho o preco aqui", nao um numero.
 
-Os apps `reservas` e `metricas` ainda estao vazios. A proxima frente e o
-`LLMResponder`, cujas tools sao as mesmas funcoes de servico que o
-`RuleResponder` usa (invariante 2).
+`LLMResponder` entregue: o tier hibrido. O modelo entende a pergunta em
+linguagem natural, mas preco, horario e disponibilidade saem de ferramenta — e
+as ferramentas SAO as funcoes de `catalogo/services.py`, com teste conferindo
+identidade objeto a objeto. O `tenant_id` nao aparece em schema nenhum: e
+injetado do contexto, para texto de cliente final nao alcancar catalogo
+alheio. Falha do modelo cai no tier de regra em vez de deixar sem resposta.
+
+Trocar de tier e mudar um campo no admin: `Configuracao.responder`.
+
+Os apps `reservas` e `metricas` ainda estao vazios. Token gasto fica na
+propria mensagem (`tokens_entrada`/`tokens_saida`), ao lado da categoria de
+cobranca — agora ha duas fontes de custo numa consulta, que e o que o
+`metricas` precisava para existir.
 
 Webhook em `POST /webhook/whatsapp/` (e `GET` para a verificacao da Meta).
 
