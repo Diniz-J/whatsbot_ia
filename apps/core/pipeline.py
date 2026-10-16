@@ -49,7 +49,7 @@ def responder_mensagem(mensagem_id: int) -> Mensagem | None:
             return None
 
         try:
-            return agendar_texto(mensagem.conversa, resposta.texto)
+            return agendar_texto(mensagem.conversa, resposta.texto, uso=resposta.uso)
         except JanelaFechada:
             # A entrada do cliente abre a janela, entao isto so acontece se a
             # mensagem ficou mais de 24h na fila. Responder por template

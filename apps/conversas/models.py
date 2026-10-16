@@ -139,6 +139,8 @@ class Mensagem(BaseModelTenant):
         help_text="Definida pela Meta na entrega; define o preco da mensagem.",
     )
     cobravel = models.BooleanField("cobravel", null=True, blank=True)
+    tokens_entrada = models.PositiveIntegerField("tokens de entrada", null=True, blank=True)
+    tokens_saida = models.PositiveIntegerField("tokens de saida", null=True, blank=True)
     respondida_em = models.DateTimeField(
         "respondida em",
         null=True,

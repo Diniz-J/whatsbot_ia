@@ -23,10 +23,15 @@ class JanelaFechada(Exception):
     """
 
 
-def agendar_texto(conversa: Conversa, texto: str) -> Mensagem:
+def agendar_texto(conversa: Conversa, texto: str, uso=None) -> Mensagem:
+    """`uso` e o custo em token de quem redigiu, quando houve custo.
+
+    O tier de regra passa `None`: nao gasta token, e gravar zero confundiria
+    com gasto medido.
+    """
     if not conversa.janela_aberta():
         raise JanelaFechada(f"conversa {conversa.pk} esta fora da janela de 24h: use template")
-    return _agendar(conversa, texto=texto, tipo="text")
+    return _agendar(conversa, texto=texto, tipo="text", uso=uso)
 
 
 def agendar_template(
@@ -52,6 +57,7 @@ def _agendar(conversa: Conversa, texto: str, tipo: str, **extra) -> Mensagem:
     """
     from apps.core.tasks import enviar_outbound
 
+    uso = extra.get("uso")
     mensagem = Mensagem.objects.create(
         tenant_id=conversa.tenant_id,
         conversa=conversa,
@@ -60,6 +66,10 @@ def _agendar(conversa: Conversa, texto: str, tipo: str, **extra) -> Mensagem:
         tipo=tipo,
         texto=texto,
         template=extra.get("template", ""),
+        # Guardado na propria mensagem, igual a categoria de cobranca: o
+        # faturamento soma as duas fontes de custo numa consulta.
+        tokens_entrada=getattr(uso, "entrada", None),
+        tokens_saida=getattr(uso, "saida", None),
     )
     transaction.on_commit(
         lambda: enviar_outbound.delay(
