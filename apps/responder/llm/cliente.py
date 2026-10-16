@@ -27,7 +27,17 @@ MAX_VOLTAS = 4
 
 
 class ErroLLM(Exception):
-    """Falha ao obter resposta do modelo."""
+    """Falha ao obter resposta do modelo.
+
+    Carrega o `uso` ja consumido quando a falha acontece depois de uma ou mais
+    chamadas: a Anthropic cobra por esses tokens mesmo sem resposta util, e
+    descartar o numero subnotificaria o custo. `None` quando nada foi gasto
+    (chave ausente, ou falha antes da primeira resposta).
+    """
+
+    def __init__(self, mensagem: str, uso: "UsoDeTokens | None" = None):
+        super().__init__(mensagem)
+        self.uso = uso
 
 
 @dataclass(frozen=True)
@@ -71,17 +81,26 @@ def conversar(sistema: str, pergunta: str, tenant_id: int) -> RespostaLLM:
             )
         except anthropic.APIError as erro:
             # Erro explicito para quem chamou decidir o fallback; nenhuma
-            # resposta inventada sai daqui.
-            raise ErroLLM(f"Falha na API da Anthropic: {erro}") from erro
+            # resposta inventada sai daqui. O `uso` leva o que ja foi cobrado
+            # nas voltas anteriores, quando houve.
+            raise ErroLLM(f"Falha na API da Anthropic: {erro}", uso) from erro
 
         uso = uso.somar(UsoDeTokens(resposta.usage.input_tokens, resposta.usage.output_tokens))
 
         if resposta.stop_reason == "refusal":
-            raise ErroLLM("Modelo recusou responder")
+            raise ErroLLM("Modelo recusou responder", uso)
+        if resposta.stop_reason == "max_tokens":
+            # Resposta cortada no limite: o texto sai pela metade e um
+            # `tool_use` truncado nao da para confiar. Cair na regra e melhor
+            # que mandar frase cortada ou agir sobre ferramenta incompleta.
+            raise ErroLLM("Modelo truncou a resposta no limite de tokens", uso)
 
         pedidos = [b for b in resposta.content if b.type == "tool_use"]
         if not pedidos:
-            return RespostaLLM(_texto_de(resposta), uso)
+            texto = _texto_de(resposta)
+            if not texto:
+                raise ErroLLM("Modelo respondeu sem texto", uso)
+            return RespostaLLM(texto, uso)
 
         mensagens.append({"role": "assistant", "content": resposta.content})
         mensagens.append(
@@ -101,12 +120,14 @@ def conversar(sistema: str, pergunta: str, tenant_id: int) -> RespostaLLM:
         )
         logger.debug("Volta %s: %s ferramenta(s)", volta + 1, len(pedidos))
 
-    raise ErroLLM(f"Modelo nao concluiu em {MAX_VOLTAS} voltas de ferramenta")
+    raise ErroLLM(f"Modelo nao concluiu em {MAX_VOLTAS} voltas de ferramenta", uso)
 
 
 def _texto_de(resposta) -> str:
-    """Junta os blocos de texto. Resposta sem texto e erro, nao string vazia."""
+    """Junta os blocos de texto. Vazio quando o modelo nao mandou texto algum.
+
+    Quem chama decide o que fazer com o vazio, para poder levantar o erro ja
+    com o `uso` gasto em maos.
+    """
     partes = [b.text for b in resposta.content if b.type == "text" and b.text.strip()]
-    if not partes:
-        raise ErroLLM("Modelo respondeu sem texto")
     return "\n".join(partes).strip()

@@ -129,6 +129,38 @@ def test_erro_da_api_vira_erro_explicito(monkeypatch, restaurante):
         conversar("sistema", "oi", restaurante.id)
 
 
+def test_resposta_truncada_no_limite_de_tokens_vira_erro(monkeypatch, restaurante):
+    """Frase cortada no meio e pior que cair na regra; stop_reason diz isso."""
+    instalar(
+        monkeypatch,
+        [RespostaFalsa([BlocoTexto("A picanha sai por R$")], stop_reason="max_tokens")],
+    )
+
+    with pytest.raises(ErroLLM, match="truncou"):
+        conversar("sistema", "quanto custa a picanha?", restaurante.id)
+
+
+def test_ao_desistir_o_erro_preserva_o_token_ja_gasto(monkeypatch, restaurante, menu):
+    """O token das voltas que rodaram foi cobrado mesmo sem resposta util."""
+    instalar(
+        monkeypatch,
+        [
+            RespostaFalsa(
+                [BlocoFerramenta("ver_cardapio", {})],
+                stop_reason="tool_use",
+                usage=Uso(input_tokens=300, output_tokens=25),
+            )
+            for _ in range(modulo.MAX_VOLTAS)
+        ],
+    )
+
+    with pytest.raises(ErroLLM) as exc:
+        conversar("sistema", "cardapio", restaurante.id)
+
+    assert exc.value.uso.entrada == 300 * modulo.MAX_VOLTAS
+    assert exc.value.uso.saida == 25 * modulo.MAX_VOLTAS
+
+
 def test_recusa_do_modelo_vira_erro(monkeypatch, restaurante):
     instalar(monkeypatch, [RespostaFalsa([], stop_reason="refusal")])
 

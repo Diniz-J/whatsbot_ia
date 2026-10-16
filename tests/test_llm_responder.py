@@ -12,7 +12,7 @@ from apps.responder.llm.responder import LLMResponder
 from apps.responder.registry import responder_para
 from apps.responder.rules import RuleResponder
 from apps.tenants.models import Configuracao
-from tests.fake_anthropic import AnthropicFalso, BlocoFerramenta, BlocoTexto, RespostaFalsa
+from tests.fake_anthropic import AnthropicFalso, BlocoFerramenta, BlocoTexto, RespostaFalsa, Uso
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +102,31 @@ def test_falha_do_modelo_cai_na_regra_e_ainda_atende(monkeypatch, restaurante, m
 
     assert "R$ 89,90" in resposta.texto
     assert resposta.uso is None
+
+
+def test_token_gasto_antes_de_falhar_e_atribuido_ao_fallback(monkeypatch, restaurante, menu):
+    """A tentativa de IA que queimou token e acabou na regra nao pode sumir do
+    faturamento: o custo gasto fica na mensagem que a regra gerou."""
+    instalar(
+        monkeypatch,
+        [
+            RespostaFalsa(
+                [BlocoFerramenta("ver_cardapio", {})],
+                stop_reason="tool_use",
+                usage=Uso(input_tokens=150, output_tokens=10),
+            )
+            for _ in range(modulo_cliente.MAX_VOLTAS)
+        ],
+    )
+
+    resposta = LLMResponder("Cantina do Ze").handle(
+        Pergunta(texto="quanto custa a picanha"), Contexto(tenant_id=restaurante.id)
+    )
+
+    # A resposta veio da regra, mas carrega o custo da tentativa que falhou.
+    assert "R$ 89,90" in resposta.texto
+    assert resposta.uso.entrada == 150 * modulo_cliente.MAX_VOLTAS
+    assert resposta.uso.saida == 10 * modulo_cliente.MAX_VOLTAS
 
 
 def test_mensagem_nao_textual_vai_para_a_regra(monkeypatch, restaurante, menu):

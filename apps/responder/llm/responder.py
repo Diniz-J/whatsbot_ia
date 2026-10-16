@@ -35,6 +35,17 @@ class LLMResponder(Responder):
             )
         except ErroLLM as erro:
             logger.exception("Atendimento por IA falhou, caindo na regra: %s", erro)
-            return RuleResponder().handle(pergunta, contexto)
+            alternativa = RuleResponder().handle(pergunta, contexto)
+            if (
+                alternativa is not None
+                and erro.uso is not None
+                and (erro.uso.entrada or erro.uso.saida)
+            ):
+                # O token gasto na tentativa que falhou foi cobrado; atribui ao
+                # fallback para o custo nao sumir do faturamento. So quando
+                # houve gasto de verdade: zero gravado confundiria com o tier
+                # de regra, que nao custa token.
+                return Resposta(texto=alternativa.texto, uso=erro.uso)
+            return alternativa
 
         return Resposta(texto=resposta.texto, uso=resposta.uso)
