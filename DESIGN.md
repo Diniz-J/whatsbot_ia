@@ -122,6 +122,29 @@ MensagemEntrada + Contexto  ->  Responder.handle  ->  Resposta
 - `apps/metricas/` registra custo por mensagem e por token, por tenant — base
   do faturamento e do controle de margem.
 
+Como ficou (out/2026):
+
+- **Volume nao tem ledger proprio.** Direcao, categoria de cobranca e token
+  gasto ja estao em `conversas.Mensagem`, e o resumo e derivado dela. Um
+  contador paralelo seria uma segunda versao da mesma verdade, para divergir
+  no primeiro bug de escrita.
+- **Preco vem de tabela datada (`TabelaPreco`), nao de configuracao.** E a
+  unica parte do custo que o historico nao sabe: a mensagem guarda a categoria
+  que a Meta cobrou, nunca quanto ela custava naquele mes. Com preco unico em
+  env, um reajuste reescreveria o custo de todos os meses ja faturados. Uma
+  linha e a tabela inteira (mensagem e token), porque as duas unidades chegam
+  no mesmo reajuste.
+- **Sem tabela o custo e indefinido, nao zero.** Mes que nao custou nada e mes
+  cujo preco ninguem cadastrou sao respostas diferentes.
+- **Tres destinos de mensagem enviada, nunca dois:** cobrada, entregue de
+  graca (`cobravel=False`, a resposta na janela de 24h) e ainda nao
+  precificada pela Meta. Juntar os dois ultimos e o jeito de inventar custo.
+- **A tabela de preco e da operacao, nao do cliente.** E o que a plataforma
+  paga a Meta e a Anthropic; editavel pelo cliente, o custo faturado seria
+  reescrito por quem o paga.
+- Pendente: reajuste no meio do periodo nao parte o calculo em dois (o periodo
+  usa a tabela vigente no inicio dele), e nao ha teto de gasto por cliente.
+
 ## 8. Topologia de deploy e isolamento
 
 Decidido em out/2026: **uma stack e um banco por cliente, na mesma VPS**. O

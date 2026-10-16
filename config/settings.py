@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.catalogo",
     "apps.conversas",
     "apps.core",
+    "apps.metricas",
     "apps.responder",
 ]
 

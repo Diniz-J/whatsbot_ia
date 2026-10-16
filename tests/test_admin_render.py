@@ -32,6 +32,8 @@ def test_login_renderiza(client):
         "/painel/catalogo/item/add/",
         "/painel/catalogo/horariofuncionamento/",
         "/painel/catalogo/horariofuncionamento/add/",
+        "/painel/metricas/tabelapreco/",
+        "/painel/metricas/tabelapreco/add/",
     ],
 )
 def test_telas_da_operacao_renderizam(client, operacao, rota):
