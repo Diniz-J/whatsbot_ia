@@ -194,3 +194,52 @@ separacao e vazamento.
 **O que ainda nao existe:** template de stack por cliente, provisionamento,
 migrate e rotacao de secret automatizados. Sem isso, B nao chega no terceiro
 cliente — e essa automacao e o trabalho real que a escolha de B cria.
+
+## 9. Reservas e disponibilidade
+
+Decidido em out/2026, junto da app `reservas`.
+
+- **Disponibilidade e o terceiro fato do invariante 2**, ao lado de preco e
+  horario. `reservas/services.py` e o dono, com os dois consumidores de
+  sempre: o `RuleResponder` e as tools do LLM.
+- **Uma tabela so para reserva do bot e reserva do balcao.** Disponibilidade
+  so e verdade se a que a equipe anota no back-office contar igual; duas
+  tabelas fariam o bot vender mesa ja prometida no telefone.
+- **Sobreposicao e recusada pelo banco**, com `ExclusionConstraint` sobre
+  `tstzrange(inicio, fim, '[)')` e igualdade de mesa (extensao `btree_gist`).
+  Checagem em Python nao resolve: dois workers gravando ao mesmo tempo passam
+  por qualquer validacao feita antes do INSERT. A validacao no `clean` fica
+  para o formulario ter erro de campo em vez de `IntegrityError`.
+- **O fim fica gravado, nao derivado.** `DURACAO_PADRAO` preenche quando
+  ninguem informa, e mudar o padrao amanha nao reescreve o que ja foi
+  anotado.
+- **Cancelada e nao-compareceu liberam a mesa; compareceu continua
+  segurando.** Por isso a disponibilidade filtra por `STATUS_OCUPAM` em vez
+  de contar toda linha.
+- **Fechado e lotado sao respostas separadas** (`Disponibilidade.aberto` ao
+  lado de `mesas`), porque sao motivos diferentes para quem perguntou e o
+  modelo escolheria um por conta propria.
+- **O prompt carrega o agora do estabelecimento.** O cliente escreve "amanha
+  as 20h" e a ferramenta recebe data absoluta; sem esse dado o modelo
+  converteria a partir do que acha que e hoje, que e o tipo de fato que ele
+  nao pode tirar da cabeca.
+
+**O bot nao fecha reserva, e isso e dependencia e nao preguica.** Fechar
+exige coletar dia, horario, numero de pessoas e nome ao longo de varias
+mensagens, e hoje **nenhum historico de conversa e passado ao modelo** (limite
+conhecido desde a fatia do `LLMResponder`): a pergunta "para quantas pessoas?"
+sairia e a resposta do cliente chegaria num turno que nao lembra da pergunta.
+O tier de regra entao nao tem como fechar, e o hibrido fecharia errado. A
+ordem e: historico de conversa primeiro, gravacao de reserva depois.
+
+Quando a gravacao entrar, duas coisas ja estao no lugar e uma falta:
+
+- A idempotencia do inbound ja existe — `pipeline.responder_mensagem` tranca
+  `respondida_em`, entao a mesma entrega reprocessada nao roda o atendimento
+  duas vezes e nao reserva em dobro.
+- A restricao do banco ja recusa a mesa dupla.
+- Falta decidir a confirmacao: resposta na janela de 24h e gratis, mas
+  lembrete na vespera e template, e template e cobrado (secao 7).
+
+**Pedido (`pedido`) nao entrou.** A secao 3 cita "reserva/pedido" na mesma
+app; item, quantidade, total e entrega sao outro dominio, com outra fatia.
