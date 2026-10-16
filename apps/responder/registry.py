@@ -1,7 +1,7 @@
 """Escolha do atendimento conforme o tier do cliente.
 
 O upsell de `rules` para `llm` e esta funcao lendo um campo diferente — sem
-deploy, sem migracao, sem fork. O `LLMResponder` entra aqui quando existir.
+deploy, sem migracao, sem fork.
 """
 
 from apps.responder.base import Responder
@@ -11,12 +11,9 @@ from apps.tenants.models import Configuracao
 
 def responder_para(configuracao: Configuracao) -> Responder:
     if configuracao.responder == Configuracao.Tier.LLM:
-        # Ainda nao implementado: cair no de regra e melhor que nao atender,
-        # e o log diz por que a resposta saiu mais simples do que o plano.
-        import logging
+        # Import local: o tier de regra nao precisa do SDK da Anthropic
+        # carregado para atender.
+        from apps.responder.llm.responder import LLMResponder
 
-        logging.getLogger(__name__).warning(
-            "Cliente %s esta no tier llm, que ainda nao existe: atendendo por regra",
-            configuracao.tenant_id,
-        )
+        return LLMResponder(nome_negocio=configuracao.tenant.nome)
     return RuleResponder()

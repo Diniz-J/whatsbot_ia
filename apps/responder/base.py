@@ -34,9 +34,15 @@ class Contexto:
 
 @dataclass(frozen=True)
 class Resposta:
-    """O que responder. `None` no lugar dela significa nao responder nada."""
+    """O que responder. `None` no lugar dela significa nao responder nada.
+
+    `uso` existe porque quem gastou token sabe quanto gastou, e e o unico
+    momento em que esse numero esta disponivel. O tier de regra deixa `None`:
+    nao custa token nenhum.
+    """
 
     texto: str
+    uso: object | None = None
 
 
 class Responder(ABC):
