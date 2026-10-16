@@ -5,7 +5,7 @@ fica em `enviadas`, e o teste afirma sobre isso em vez de sobre uma chamada
 HTTP que ninguem quer fazer na suite.
 """
 
-import itertools
+import uuid
 
 from apps.canal.base import (
     Canal,
@@ -22,7 +22,6 @@ class CanalFake(Canal):
         # caminhos de retentativa sem simular rede.
         self.falha = falha
         self.enviadas: list[dict] = []
-        self._ids = itertools.count(1)
 
     def normalizar_evento(self, payload: dict) -> list[MensagemEntrada]:
         from apps.canal.whatsapp.canal import CanalWhatsApp
@@ -55,7 +54,11 @@ class CanalFake(Canal):
         if self.falha is not None:
             raise self.falha
         self.enviadas.append(envio)
-        return f"wamid.FAKE{next(self._ids)}"
+        # Id unico entre instancias, e nao um contador por instancia: a
+        # fabrica cria um canal por envio, e um contador reiniciado faria
+        # todos os envios colidirem no unique de `id_externo` — falha que o
+        # canal real nao tem, porque o id vem da Meta.
+        return f"wamid.FAKE{uuid.uuid4().hex[:16]}"
 
 
 # Reexportados para o teste montar falha sem importar de dois lugares.

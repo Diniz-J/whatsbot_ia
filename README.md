@@ -49,8 +49,14 @@ de funcionamento (inclusive faixa que passa da meia-noite), com back-office
 em que o dono do negocio edita tudo. `catalogo/services.py` e a fonte unica
 dessas respostas — e o que o invariante 2 exige.
 
-Os apps `responder`, `reservas` e `metricas` ainda estao vazios. A proxima
-fatia e o `RuleResponder`, consumindo esses servicos.
+`RuleResponder` entregue: o bot atende de verdade. Cinco funcoes — saudacao,
+cardapio, preco de item, horario de funcionamento e fallback que oferece
+gente. Tudo que ele afirma sai de `catalogo/services.py`; nada e inventado.
+Item sem preco cadastrado recebe "nao tenho o preco aqui", nao um numero.
+
+Os apps `reservas` e `metricas` ainda estao vazios. A proxima frente e o
+`LLMResponder`, cujas tools sao as mesmas funcoes de servico que o
+`RuleResponder` usa (invariante 2).
 
 Webhook em `POST /webhook/whatsapp/` (e `GET` para a verificacao da Meta).
 
