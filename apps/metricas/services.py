@@ -12,12 +12,14 @@ Nada aqui depende de Django alem do ORM.
 
 from dataclasses import dataclass
 from datetime import date, datetime, time
+from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.conversas.models import CategoriaCobranca, Mensagem
+from apps.metricas.models import TOKENS_POR_UNIDADE_DE_PRECO, TabelaPreco
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class ResumoCusto:
     cobranca_indefinida: int
     tokens_entrada: int
     tokens_saida: int
+    tabela: TabelaPreco | None = None
 
     @property
     def cobradas_sem_categoria(self) -> int:
@@ -57,6 +60,40 @@ class ResumoCusto:
     def tokens_totais(self) -> int:
         return self.tokens_entrada + self.tokens_saida
 
+    @property
+    def custo_mensagens(self) -> Decimal | None:
+        """Custo das entregas cobraveis, ou `None` sem tabela de preco.
+
+        `None` e nao zero: nao ha diferenca entre um mes que nao custou nada e
+        um mes cujo preco ninguem cadastrou, a nao ser a que este campo faz.
+        As cobraveis sem categoria ficam de fora por nao terem preco — a
+        quantidade delas esta em `cobradas_sem_categoria`.
+        """
+        if self.tabela is None:
+            return None
+        return sum(
+            (
+                self.tabela.por_mensagem(categoria) * quantidade
+                for categoria, quantidade in self.cobradas_por_categoria.items()
+            ),
+            Decimal("0"),
+        )
+
+    @property
+    def custo_tokens(self) -> Decimal | None:
+        """Custo do token gasto no periodo, ou `None` sem tabela de preco."""
+        if self.tabela is None:
+            return None
+        entrada = Decimal(self.tokens_entrada) * self.tabela.por_milhao_entrada
+        saida = Decimal(self.tokens_saida) * self.tabela.por_milhao_saida
+        return (entrada + saida) / TOKENS_POR_UNIDADE_DE_PRECO
+
+    @property
+    def custo_total(self) -> Decimal | None:
+        if self.tabela is None:
+            return None
+        return self.custo_mensagens + self.custo_tokens
+
 
 def resumo(tenant_id: int, inicio: datetime, fim: datetime) -> ResumoCusto:
     """Agrega o periodo `[inicio, fim)` numa consulta.
@@ -64,9 +101,14 @@ def resumo(tenant_id: int, inicio: datetime, fim: datetime) -> ResumoCusto:
     Intervalo semiaberto de proposito: mes fechado com mes seguinte aberto
     nao conta a mensagem da virada duas vezes.
 
-    Uma consulta so, com agregado condicional, porque este resumo e o que a
-    tela e o faturamento vao abrir todo mes sobre a tabela que mais cresce no
-    banco.
+    Uma consulta para o agregado, com condicional, porque este resumo e o que
+    a tela e o faturamento vao abrir todo mes sobre a tabela que mais cresce
+    no banco. A segunda consulta e a tabela de preco.
+
+    O periodo inteiro e precificado pela tabela vigente no inicio dele. Um
+    reajuste no meio do mes nao parte o calculo em dois: resolver isso exige
+    agregar por faixa de vigencia, e nao vale o codigo antes de existir o
+    primeiro reajuste.
     """
     saida = Q(direcao=Mensagem.Direcao.SAIDA)
     por_categoria = {
@@ -103,6 +145,20 @@ def resumo(tenant_id: int, inicio: datetime, fim: datetime) -> ResumoCusto:
         cobranca_indefinida=agregados["cobranca_indefinida"],
         tokens_entrada=agregados["tokens_entrada"],
         tokens_saida=agregados["tokens_saida"],
+        tabela=tabela_vigente(tenant_id, timezone.localtime(inicio).date()),
+    )
+
+
+def tabela_vigente(tenant_id: int, quando: date) -> TabelaPreco | None:
+    """A tabela de preco que valia na data, ou `None` se nenhuma valia ainda.
+
+    A mais recente que ja tinha comecado: cadastrar o reajuste do mes que vem
+    hoje nao muda o custo de hoje.
+    """
+    return (
+        TabelaPreco.objects.filter(tenant_id=tenant_id, vigente_de__lte=quando)
+        .order_by("-vigente_de")
+        .first()
     )
 
 

@@ -148,8 +148,12 @@ def test_resumo_nao_ve_mensagem_do_vizinho(restaurante, clinica, janeiro):
     assert resultado.tokens_entrada == 0
 
 
-def test_resumo_cabe_numa_consulta(restaurante, conversa, janeiro, django_assert_num_queries):
-    """Trava o agregado condicional: e a tabela que mais cresce no banco."""
+def test_resumo_cabe_em_duas_consultas(restaurante, conversa, janeiro, django_assert_num_queries):
+    """Trava o agregado condicional: e a tabela que mais cresce no banco.
+
+    Duas: o agregado e a tabela de preco. Qualquer numero acima disso quer
+    dizer consulta por mensagem.
+    """
     inicio, _ = janeiro
     for _ in range(5):
         mensagem(
@@ -162,7 +166,7 @@ def test_resumo_cabe_numa_consulta(restaurante, conversa, janeiro, django_assert
             tokens_saida=5,
         )
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(2):
         resultado = services.resumo(restaurante.pk, *janeiro)
         assert resultado.cobradas == 5
 
