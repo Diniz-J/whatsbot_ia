@@ -11,6 +11,7 @@ from django.utils import timezone
 from apps.canal.base import ErroPermanente, ErroTransitorio
 from apps.canal.fabrica import canal_para
 from apps.conversas.models import EventoWebhook, Mensagem
+from apps.core.pipeline import responder_mensagem
 from apps.core.services import processar_evento
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,19 @@ def processar_inbound(evento_id: int) -> int:
         logger.error("Evento de webhook %s nao existe mais", evento_id)
         return 0
 
-    return len(processar_evento(evento))
+    criadas = processar_evento(evento)
+    # Tarefa propria por mensagem: uma falha ao redigir nao desfaz a
+    # normalizacao, e cada uma retenta por conta.
+    for mensagem in criadas:
+        responder_inbound.delay(mensagem.pk)
+    return len(criadas)
+
+
+@shared_task(name="core.responder_inbound")
+def responder_inbound(mensagem_id: int) -> int | None:
+    """Atende uma mensagem de entrada e devolve o id da resposta agendada."""
+    resposta = responder_mensagem(mensagem_id)
+    return resposta.pk if resposta is not None else None
 
 
 @shared_task(

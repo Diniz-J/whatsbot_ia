@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.catalogo",
     "apps.conversas",
     "apps.core",
+    "apps.responder",
 ]
 
 MIDDLEWARE = [
@@ -124,9 +125,11 @@ WHATSAPP_APP_SECRET = config("WHATSAPP_APP_SECRET", default="")
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = config("WHATSAPP_WEBHOOK_VERIFY_TOKEN", default="")
 WHATSAPP_API_VERSION = config("WHATSAPP_API_VERSION", default="v21.0")
 WHATSAPP_TIMEOUT = config("WHATSAPP_TIMEOUT", default=10.0, cast=float)
-# Em desenvolvimento, nao falar com a Meta de verdade. A suite usa canal
-# falso injetado pelo teste, entao isto fica desligado nela.
-CANAL_EM_MEMORIA = config("CANAL_EM_MEMORIA", default=False, cast=bool)
+# Em desenvolvimento, nao falar com a Meta de verdade. Em teste o default e
+# ligado: desde que o bot responde sozinho, um envio sai de qualquer entrega
+# processada, e uma credencial em fixture bastaria para a suite fazer chamada
+# cobrada. Quem precisa afirmar sobre o envio injeta o proprio canal falso.
+CANAL_EM_MEMORIA = config("CANAL_EM_MEMORIA", default=TESTING, cast=bool)
 
 # Quanto tempo num estado nao-final conta como travado. Generoso porque o
 # timeout de envio e de segundos: o que passa disto nao esta em voo.

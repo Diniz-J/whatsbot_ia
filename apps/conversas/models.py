@@ -139,6 +139,12 @@ class Mensagem(BaseModelTenant):
         help_text="Definida pela Meta na entrega; define o preco da mensagem.",
     )
     cobravel = models.BooleanField("cobravel", null=True, blank=True)
+    respondida_em = models.DateTimeField(
+        "respondida em",
+        null=True,
+        blank=True,
+        help_text="Quando o atendimento gerou resposta para esta mensagem de entrada.",
+    )
 
     class Meta:
         verbose_name = "mensagem"

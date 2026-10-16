@@ -13,6 +13,15 @@ def segredo(settings):
     settings.WHATSAPP_APP_SECRET = SEGREDO
 
 
+def entradas():
+    """Só as mensagens de entrada.
+
+    O bot responde a cada entrada desde o `RuleResponder`, então contar
+    `Mensagem` sem filtro passou a incluir a resposta.
+    """
+    return Mensagem.objects.filter(direcao=Mensagem.Direcao.ENTRADA)
+
+
 def entregar(client, payload, assinatura=None, segredo=SEGREDO):
     corpo, calculada = corpo_e_assinatura(payload, segredo)
     return client.post(
@@ -75,8 +84,7 @@ def test_grava_e_processa_mensagem_do_proprio_numero(
     assert evento.id_mensagem == "wamid.AAA"
     assert evento.processado_em is not None
 
-    mensagem = Mensagem.objects.get()
-    assert mensagem.direcao == Mensagem.Direcao.ENTRADA
+    mensagem = Mensagem.objects.get(direcao=Mensagem.Direcao.ENTRADA)
     assert mensagem.texto == "oi, qual o horario de voces?"
     assert mensagem.tenant_id == restaurante.id
 
@@ -98,7 +106,7 @@ def test_reenvio_da_mesma_mensagem_nao_duplica(
             assert entregar(client, payload_mensagem()).status_code == 200
 
     assert EventoWebhook.objects.count() == 1
-    assert Mensagem.objects.count() == 1
+    assert entradas().count() == 1
     assert Contato.objects.count() == 1
 
 
@@ -109,7 +117,7 @@ def test_segunda_mensagem_do_mesmo_contato_reusa_conversa(
         with django_capture_on_commit_callbacks(execute=True):
             entregar(client, payload_mensagem(id_mensagem=id_mensagem))
 
-    assert Mensagem.objects.count() == 2
+    assert entradas().count() == 2
     assert Conversa.objects.count() == 1
     assert Contato.objects.count() == 1
 
@@ -147,7 +155,7 @@ def test_mensagem_nao_textual_e_gravada_com_o_tipo(
     with django_capture_on_commit_callbacks(execute=True):
         entregar(client, payload_mensagem(tipo="audio"))
 
-    mensagem = Mensagem.objects.get()
+    mensagem = Mensagem.objects.get(direcao=Mensagem.Direcao.ENTRADA)
     assert mensagem.tipo == "audio"
     assert mensagem.texto == ""
 
@@ -175,7 +183,7 @@ def test_entrega_com_duas_mensagens_nao_duplica(
         assert entregar(client, payload).status_code == 200
 
     assert EventoWebhook.objects.count() == 2
-    assert sorted(Mensagem.objects.values_list("id_externo", flat=True)) == [
+    assert sorted(entradas().values_list("id_externo", flat=True)) == [
         "wamid.AAA",
         "wamid.BBB",
     ]

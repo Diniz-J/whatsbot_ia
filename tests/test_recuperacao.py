@@ -40,7 +40,7 @@ def test_reentrega_de_evento_nao_processado_volta_para_a_fila(
 
     evento = EventoWebhook.objects.get()
     assert evento.processado_em is not None
-    assert Mensagem.objects.count() == 1
+    assert Mensagem.objects.filter(direcao=Mensagem.Direcao.ENTRADA).count() == 1
 
 
 def test_reentrega_de_evento_ja_processado_nao_refaz_nada(
@@ -55,4 +55,4 @@ def test_reentrega_de_evento_ja_processado_nao_refaz_nada(
         entregar(client, payload)
 
     assert EventoWebhook.objects.get().processado_em == processado_em
-    assert Mensagem.objects.count() == 1
+    assert Mensagem.objects.filter(direcao=Mensagem.Direcao.ENTRADA).count() == 1
