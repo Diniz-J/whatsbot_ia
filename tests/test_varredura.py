@@ -125,5 +125,51 @@ def test_entrega_ja_processada_nao_e_varrida(restaurante, canal, settings):
     assert tasks.varrer_pendentes()["entregas"] == 0
 
 
+def test_entrada_sem_resposta_e_reatendida(restaurante, conversa, canal, settings):
+    """Entrada gravada cujo `responder_inbound` se perdeu nao fica orfa: o
+    evento ja consta processado, entao so esta varredura a alcanca."""
+    mensagem = Mensagem.objects.create(
+        tenant=restaurante,
+        conversa=conversa,
+        direcao=Mensagem.Direcao.ENTRADA,
+        texto="qual o horario?",
+    )
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        criado_em=timezone.now() - timedelta(minutes=settings.RESPOSTA_TRAVADA_MINUTOS + 1)
+    )
+
+    assert tasks.varrer_pendentes()["respostas"] == 1
+
+    mensagem.refresh_from_db()
+    assert mensagem.respondida_em is not None
+
+
+def test_entrada_recente_sem_resposta_espera(restaurante, conversa, canal):
+    """A tarefa de atendimento normal pode so estar na fila ainda."""
+    Mensagem.objects.create(
+        tenant=restaurante,
+        conversa=conversa,
+        direcao=Mensagem.Direcao.ENTRADA,
+        texto="oi",
+    )
+
+    assert tasks.varrer_pendentes()["respostas"] == 0
+
+
+def test_entrada_ja_respondida_nao_e_reatendida(restaurante, conversa, canal, settings):
+    mensagem = Mensagem.objects.create(
+        tenant=restaurante,
+        conversa=conversa,
+        direcao=Mensagem.Direcao.ENTRADA,
+        texto="oi",
+        respondida_em=timezone.now(),
+    )
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        criado_em=timezone.now() - timedelta(minutes=settings.RESPOSTA_TRAVADA_MINUTOS + 10)
+    )
+
+    assert tasks.varrer_pendentes()["respostas"] == 0
+
+
 def test_varredura_sem_nada_pendente_nao_faz_nada(restaurante, canal):
-    assert tasks.varrer_pendentes() == {"envios": 0, "entregas": 0}
+    assert tasks.varrer_pendentes() == {"envios": 0, "entregas": 0, "respostas": 0}

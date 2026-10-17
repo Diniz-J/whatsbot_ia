@@ -136,12 +136,16 @@ def _configuracao(mensagem: Mensagem):
 def varrer_pendentes() -> dict[str, int]:
     """Recupera o que ficou preso num estado nao-final.
 
-    Duas coisas travam sem isto, e as duas sao perda silenciosa:
+    Tres coisas travam sem isto, e as tres sao perda silenciosa:
 
     - Mensagem reservada (`enviando`) cujo worker morreu antes da resposta.
       Ninguem mais a reclama, porque o claim justamente impede isso.
     - Entrega gravada que nunca foi processada, quando o enfileiramento se
       perdeu e a Meta nao reenviou.
+    - Mensagem de entrada ja gravada que nunca foi atendida, quando o
+      `responder_inbound` nao chegou a ser enfileirado (processo morto entre o
+      commit do evento e o `delay`) ou falhou sem retentativa. O evento ja
+      consta como processado, entao a varredura de entregas nao a alcanca.
 
     O limite de tempo e generoso de proposito: o timeout de envio e de
     segundos, entao uma mensagem em `enviando` por mais de alguns minutos nao
@@ -152,12 +156,16 @@ def varrer_pendentes() -> dict[str, int]:
     agora = timezone.now()
     reenfileiradas = _destravar_envios(agora)
     reprocessados = _reprocessar_entregas(agora)
+    reatendidas = _reatender_entradas(agora)
 
-    if reenfileiradas or reprocessados:
+    if reenfileiradas or reprocessados or reatendidas:
         logger.warning(
-            "Varredura destravou %s envio(s) e %s entrega(s)", reenfileiradas, reprocessados
+            "Varredura destravou %s envio(s), %s entrega(s) e %s resposta(s)",
+            reenfileiradas,
+            reprocessados,
+            reatendidas,
         )
-    return {"envios": reenfileiradas, "entregas": reprocessados}
+    return {"envios": reenfileiradas, "entregas": reprocessados, "respostas": reatendidas}
 
 
 def _destravar_envios(agora) -> int:
@@ -185,4 +193,25 @@ def _reprocessar_entregas(agora) -> int:
     )
     for evento_id in pendentes:
         processar_inbound.delay(evento_id)
+    return len(pendentes)
+
+
+def _reatender_entradas(agora) -> int:
+    """Reenfileira o atendimento de entradas que nunca foram respondidas.
+
+    `respondida_em` nula significa que nenhum `responder_inbound` chegou a
+    reservar a mensagem: o `_reservar` do pipeline carimba esse campo com lock
+    antes de redigir. Reenfileirar e seguro porque esse mesmo lock impede que
+    duas execucoes atendam a mesma entrada.
+    """
+    limite = agora - timedelta(minutes=settings.RESPOSTA_TRAVADA_MINUTOS)
+    pendentes = list(
+        Mensagem.objects.filter(
+            direcao=Mensagem.Direcao.ENTRADA,
+            respondida_em__isnull=True,
+            criado_em__lt=limite,
+        ).values_list("pk", flat=True)
+    )
+    for mensagem_id in pendentes:
+        responder_inbound.delay(mensagem_id)
     return len(pendentes)

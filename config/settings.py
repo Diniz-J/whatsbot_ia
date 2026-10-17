@@ -147,6 +147,9 @@ LLM_TIMEOUT = config("LLM_TIMEOUT", default=30.0, cast=float)
 # timeout de envio e de segundos: o que passa disto nao esta em voo.
 ENVIO_TRAVADO_MINUTOS = config("ENVIO_TRAVADO_MINUTOS", default=15, cast=int)
 INBOUND_TRAVADO_MINUTOS = config("INBOUND_TRAVADO_MINUTOS", default=5, cast=int)
+# Entrada gravada, mas sem atendimento, por mais que isto conta como travada. O
+# atendimento leva segundos (regra) ou dezenas deles (IA, com o timeout do LLM).
+RESPOSTA_TRAVADA_MINUTOS = config("RESPOSTA_TRAVADA_MINUTOS", default=5, cast=int)
 
 # A varredura so roda se houver um processo `celery beat` no ar. Sem ele, o
 # agendamento abaixo e inerte e o destravamento nao acontece — ver DEPLOY.
