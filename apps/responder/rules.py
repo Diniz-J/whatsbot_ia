@@ -36,6 +36,15 @@ HORARIO = (
     "funciona",
     "funcionam",
 )
+RESERVA = (
+    "reserva",
+    "reservas",
+    "reservar",
+    "mesa",
+    "mesas",
+    "lugar",
+    "lugares",
+)
 # Gatilhos de pergunta de preco, do mais longo para o mais curto: o termo do
 # item e o que vem DEPOIS do gatilho. Extrair pela cauda e nao por remocao de
 # ruido importa porque o nome do item pode conter as mesmas palavras — tirar
@@ -91,6 +100,10 @@ class RuleResponder(Responder):
         # em cardapio, e a saudacao so vale quando vem sozinha.
         if self._pede_preco(texto):
             return Resposta(self._responder_preco(texto, contexto))
+        # Antes de horario de proposito: "que horas tem mesa" e pergunta de
+        # reserva, e cairia no horario de funcionamento pelo "que horas".
+        if contem_alguma(texto, RESERVA):
+            return Resposta(self._responder_reserva())
         if contem_alguma(texto, CARDAPIO):
             return Resposta(self._responder_cardapio(contexto))
         if contem_alguma(texto, HORARIO):
@@ -164,18 +177,34 @@ class RuleResponder(Responder):
         )
 
     @staticmethod
+    def _responder_reserva() -> str:
+        """Reconhece o assunto e passa para gente. Nunca afirma disponibilidade.
+
+        O tier de regra casa palavra-chave numa mensagem isolada: nao extrai
+        dia nem numero de pessoas, e nao tem o fio da conversa para pedir o
+        que falta. Dizer "temos mesa" sem consultar seria exatamente o que o
+        invariante 2 proibe, e consultar sem saber o horario e o tamanho do
+        grupo nao e consultar nada.
+        """
+        return (
+            "Consigo te passar para alguem da equipe fechar a reserva. "
+            "Me diga o dia, o horario e quantas pessoas."
+        )
+
+    @staticmethod
     def _saudar(contexto: Contexto) -> str:
         nome = f" {contexto.nome_contato.split()[0]}" if contexto.nome_contato else ""
         return (
-            f"Oi{nome}! Posso te passar o cardapio, o preco de um item ou o nosso horario. "
-            "O que voce precisa?"
+            f"Oi{nome}! Posso te passar o cardapio, o preco de um item, o nosso horario "
+            "ou falar de reserva. O que voce precisa?"
         )
 
     @staticmethod
     def _nao_entendi(contexto: Contexto) -> str:
         return (
-            "Nao entendi. Consigo te passar o cardapio, o preco de um item ou o nosso "
-            "horario de funcionamento. Se preferir falar com uma pessoa, e so dizer."
+            "Nao entendi. Consigo te passar o cardapio, o preco de um item, o nosso "
+            "horario de funcionamento ou falar de reserva. Se preferir falar com uma "
+            "pessoa, e so dizer."
         )
 
 

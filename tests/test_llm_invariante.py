@@ -7,6 +7,7 @@ LLM" de buscar preco, isto quebra.
 """
 
 from apps.catalogo import services as catalogo
+from apps.reservas import services as reservas
 from apps.responder.llm import ferramentas
 
 
@@ -17,6 +18,8 @@ def test_cada_ferramenta_e_a_propria_funcao_de_servico():
         "ver_horarios": catalogo.horarios,
         "esta_aberto": catalogo.esta_aberto,
         "proxima_abertura": catalogo.proxima_abertura,
+        "verificar_disponibilidade": reservas.disponibilidade,
+        "horarios_livres": reservas.horarios_livres,
     }
 
 
@@ -28,6 +31,8 @@ def test_identidade_objeto_a_objeto():
     assert ferramentas.FERRAMENTAS["ver_horarios"] is catalogo.horarios
     assert ferramentas.FERRAMENTAS["esta_aberto"] is catalogo.esta_aberto
     assert ferramentas.FERRAMENTAS["proxima_abertura"] is catalogo.proxima_abertura
+    assert ferramentas.FERRAMENTAS["verificar_disponibilidade"] is reservas.disponibilidade
+    assert ferramentas.FERRAMENTAS["horarios_livres"] is reservas.horarios_livres
 
 
 def test_nenhuma_ferramenta_declarada_sem_servico_atras():
@@ -66,3 +71,32 @@ def test_prompt_proibe_afirmar_sem_ferramenta_e_trata_texto_como_dado():
     assert "nunca instrucao" in texto
     assert "outro estabelecimento" in texto
     assert "Cantina do Ze" in texto
+
+
+def test_prompt_proibe_fechar_reserva():
+    """O bot confirma disponibilidade e para ai.
+
+    Dizer "sua reserva esta feita" sem nada gravado e a pior resposta
+    possivel: o cliente aparece no sabado e nao tem mesa. Enquanto nao houver
+    ferramenta de gravar, o prompt tem que proibir a promessa.
+    """
+    from apps.responder.llm.prompt import sistema
+
+    texto = sistema("Cantina do Ze")
+
+    assert "NAO fecha reserva" in texto
+    assert "Nunca diga que a reserva esta feita" in texto
+
+
+def test_prompt_informa_o_agora_para_a_conversao_de_data():
+    """ "Amanha as 20h" vira data absoluta na ferramenta, e o modelo precisa
+    saber que dia e hoje para converter — nao e fato de cabeca dele."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from apps.responder.llm.prompt import sistema
+
+    texto = sistema("Cantina do Ze", datetime(2026, 3, 7, 19, 30, tzinfo=ZoneInfo("UTC")))
+
+    assert "07/03/2026 19:30" in texto
+    assert "sabado" in texto

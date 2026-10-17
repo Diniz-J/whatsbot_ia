@@ -36,6 +36,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Pela ExclusionConstraint de reservas (sobreposicao de horario na mesa).
+    "django.contrib.postgres",
     "rest_framework",
     "apps.common",
     "apps.tenants",
@@ -44,6 +46,7 @@ INSTALLED_APPS = [
     "apps.conversas",
     "apps.core",
     "apps.metricas",
+    "apps.reservas",
     "apps.responder",
 ]
 

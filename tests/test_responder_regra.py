@@ -211,3 +211,58 @@ def test_atendimento_e_escopado_por_cliente(bot, restaurante, clinica, menu):
     resposta = responder(bot, Contexto(tenant_id=clinica.id), "cardapio")
 
     assert "Picanha" not in resposta.texto
+
+
+def test_reserva_e_reconhecida_e_encaminhada(restaurante):
+    """O tier de regra reconhece o assunto e passa para gente."""
+    resposta = RuleResponder().handle(
+        Pergunta(texto="queria reservar uma mesa"), Contexto(tenant_id=restaurante.pk)
+    )
+
+    assert "equipe" in resposta.texto
+    assert "dia" in resposta.texto and "pessoas" in resposta.texto
+
+
+def test_que_horas_tem_mesa_cai_em_reserva_e_nao_em_horario(restaurante):
+    """O "que horas" tambem casa horario de funcionamento; a pergunta e de mesa."""
+    resposta = RuleResponder().handle(
+        Pergunta(texto="que horas tem mesa livre?"), Contexto(tenant_id=restaurante.pk)
+    )
+
+    assert "reserva" in resposta.texto
+
+
+def test_regra_nunca_afirma_disponibilidade_de_mesa(restaurante):
+    """A resposta tem que ser a mesma com o restaurante vazio e com ele lotado.
+
+    E a prova de que o tier de regra nao le disponibilidade: ele nao sabe o
+    dia nem o tamanho do grupo, entao qualquer afirmacao sobre mesa seria
+    chute — exatamente o que o invariante 2 proibe.
+    """
+    from datetime import time, timedelta
+
+    from django.utils import timezone
+
+    from apps.catalogo.models import HorarioFuncionamento
+    from apps.reservas.models import Mesa, Reserva
+
+    pergunta = Pergunta(texto="tem mesa para 4?")
+    contexto = Contexto(tenant_id=restaurante.pk)
+    com_mesa_vazia = RuleResponder().handle(pergunta, contexto)
+
+    HorarioFuncionamento.objects.create(
+        tenant=restaurante, dia_semana=0, abre=time(19, 0), fecha=time(23, 0)
+    )
+    mesa = Mesa.objects.create(tenant=restaurante, nome="Mesa 1", capacidade=4)
+    Reserva.objects.create(
+        tenant=restaurante,
+        mesa=mesa,
+        nome="Ana",
+        pessoas=4,
+        inicio=timezone.now() + timedelta(days=1),
+    )
+    com_mesa_lotada = RuleResponder().handle(pergunta, contexto)
+
+    assert com_mesa_vazia.texto == com_mesa_lotada.texto
+    for promessa in ("tem mesa", "ha mesa", "esta reservada", "disponivel"):
+        assert promessa not in com_mesa_lotada.texto.lower()
