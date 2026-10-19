@@ -213,3 +213,100 @@ def test_pedido_usa_modelo_e_esforco_configurados(monkeypatch, restaurante, sett
     assert pedido["output_config"] == {"effort": "low"}
     assert pedido["thinking"] == {"type": "adaptive"}
     assert pedido["system"] == "sistema"
+
+
+def test_historico_vai_antes_da_pergunta_com_os_papeis_certos(monkeypatch, restaurante):
+    """A pergunta atual e sempre o ultimo turno."""
+    from apps.responder.base import Autor, Turno
+
+    mensagens = instalar(monkeypatch, [RespostaFalsa([BlocoTexto("Para quatro, as 20h.")])])
+
+    conversar(
+        "sistema",
+        "quatro",
+        restaurante.id,
+        historico=(
+            Turno(Autor.CLIENTE, "tem mesa sabado?"),
+            Turno(Autor.ATENDENTE, "para quantas pessoas?"),
+        ),
+    )
+
+    assert mensagens.chamadas[0]["messages"] == [
+        {"role": "user", "content": "tem mesa sabado?"},
+        {"role": "assistant", "content": "para quantas pessoas?"},
+        {"role": "user", "content": "quatro"},
+    ]
+
+
+def test_historico_que_comeca_no_atendente_perde_o_inicio(monkeypatch, restaurante):
+    """A API recusa conversa que comeca pelo assistente.
+
+    A janela pode abrir numa fala do atendente — basta a entrada que a motivou
+    ter ficado para tras do recorte. Perder o comeco do fio e melhor que um
+    400 que derruba o atendimento inteiro.
+    """
+    from apps.responder.base import Autor, Turno
+
+    mensagens = instalar(monkeypatch, [RespostaFalsa([BlocoTexto("ok")])])
+
+    conversar(
+        "sistema",
+        "quero sim",
+        restaurante.id,
+        historico=(
+            Turno(Autor.ATENDENTE, "quer reservar?"),
+            Turno(Autor.ATENDENTE, "temos mesa as 20h"),
+            Turno(Autor.CLIENTE, "e as 21h?"),
+        ),
+    )
+
+    assert mensagens.chamadas[0]["messages"] == [
+        {"role": "user", "content": "e as 21h?"},
+        {"role": "user", "content": "quero sim"},
+    ]
+
+
+def test_historico_todo_do_atendente_sobra_so_a_pergunta(monkeypatch, restaurante):
+    from apps.responder.base import Autor, Turno
+
+    mensagens = instalar(monkeypatch, [RespostaFalsa([BlocoTexto("ok")])])
+
+    conversar("sistema", "oi", restaurante.id, historico=(Turno(Autor.ATENDENTE, "ola"),))
+
+    assert mensagens.chamadas[0]["messages"] == [{"role": "user", "content": "oi"}]
+
+
+def test_sem_historico_a_chamada_fica_como_antes(monkeypatch, restaurante):
+    """Primeiro contato nao paga token de historico nenhum."""
+    mensagens = instalar(monkeypatch, [RespostaFalsa([BlocoTexto("oi")])])
+
+    conversar("sistema", "oi", restaurante.id)
+
+    assert mensagens.chamadas[0]["messages"] == [{"role": "user", "content": "oi"}]
+
+
+def test_historico_tambem_acompanha_as_voltas_de_ferramenta(monkeypatch, restaurante):
+    """O fio nao pode sumir quando o modelo pede ferramenta no meio."""
+    from apps.responder.base import Autor, Turno
+
+    mensagens = instalar(
+        monkeypatch,
+        [
+            RespostaFalsa(
+                [BlocoFerramenta("ver_horarios", {})],
+                stop_reason="tool_use",
+            ),
+            RespostaFalsa([BlocoTexto("Abrimos as 19h.")]),
+        ],
+    )
+
+    conversar(
+        "sistema",
+        "e no sabado?",
+        restaurante.id,
+        historico=(Turno(Autor.CLIENTE, "que horas abre?"),),
+    )
+
+    segunda = mensagens.chamadas[1]["messages"]
+    assert segunda[0] == {"role": "user", "content": "que horas abre?"}
+    assert segunda[1] == {"role": "user", "content": "e no sabado?"}

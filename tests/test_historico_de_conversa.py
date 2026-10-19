@@ -191,3 +191,36 @@ def test_tier_de_regra_responde_igual_com_e_sem_historico(restaurante):
     )
 
     assert sem.texto == com.texto
+
+
+def test_ponta_a_ponta_o_historico_chega_ao_modelo(conversa, restaurante, monkeypatch, settings):
+    """O fio todo: pipeline monta, responder passa, cliente envia.
+
+    Cada peca tem teste proprio, mas e a fiacao entre elas que faz o
+    multi-turno existir — e ela quebraria em silencio.
+    """
+    from apps.responder.llm import cliente as modulo_cliente
+    from apps.tenants.models import Configuracao
+    from tests.fake_anthropic import AnthropicFalso, BlocoTexto, RespostaFalsa
+
+    settings.ANTHROPIC_API_KEY = "chave-de-teste"
+    configuracao = restaurante.configuracao
+    configuracao.responder = Configuracao.Tier.LLM
+    configuracao.save(update_fields=["responder", "atualizado_em"])
+
+    construir = AnthropicFalso.com([RespostaFalsa([BlocoTexto("Reservado para quatro.")])])
+    monkeypatch.setattr(modulo_cliente.anthropic, "Anthropic", construir)
+
+    falar(conversa, Mensagem.Direcao.ENTRADA, "tem mesa sabado?", atras=timedelta(minutes=3))
+    falar(conversa, Mensagem.Direcao.SAIDA, "para quantas pessoas?", atras=timedelta(minutes=2))
+    atual = falar(conversa, Mensagem.Direcao.ENTRADA, "quatro")
+
+    from apps.core.pipeline import responder_mensagem
+
+    responder_mensagem(atual.pk)
+
+    assert construir.mensagens.chamadas[0]["messages"] == [
+        {"role": "user", "content": "tem mesa sabado?"},
+        {"role": "assistant", "content": "para quantas pessoas?"},
+        {"role": "user", "content": "quatro"},
+    ]

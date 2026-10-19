@@ -32,6 +32,7 @@ class LLMResponder(Responder):
                 sistema=sistema(self._nome_negocio),
                 pergunta=pergunta.texto,
                 tenant_id=contexto.tenant_id,
+                historico=contexto.historico,
             )
         except ErroLLM as erro:
             logger.exception("Atendimento por IA falhou, caindo na regra: %s", erro)

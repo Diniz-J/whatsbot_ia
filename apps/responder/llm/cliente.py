@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import anthropic
 from django.conf import settings
 
+from apps.responder.base import Autor, Turno
 from apps.responder.llm import ferramentas
 
 logger = logging.getLogger(__name__)
@@ -55,13 +56,22 @@ class RespostaLLM:
     uso: UsoDeTokens
 
 
-def conversar(sistema: str, pergunta: str, tenant_id: int) -> RespostaLLM:
-    """Pergunta ao modelo, roda as ferramentas que ele pedir, devolve o texto."""
+def conversar(
+    sistema: str,
+    pergunta: str,
+    tenant_id: int,
+    historico: tuple[Turno, ...] = (),
+) -> RespostaLLM:
+    """Pergunta ao modelo, roda as ferramentas que ele pedir, devolve o texto.
+
+    O historico entra antes da pergunta, que fica sempre sendo o ultimo turno.
+    Quem decide quanto historico vem e o pipeline; aqui ele so e traduzido.
+    """
     if not settings.ANTHROPIC_API_KEY:
         raise ErroLLM("ANTHROPIC_API_KEY nao configurada")
 
     cliente = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=settings.LLM_TIMEOUT)
-    mensagens = [{"role": "user", "content": pergunta}]
+    mensagens = [*_turnos(historico), {"role": "user", "content": pergunta}]
     uso = UsoDeTokens()
 
     for volta in range(MAX_VOLTAS):
@@ -121,6 +131,24 @@ def conversar(sistema: str, pergunta: str, tenant_id: int) -> RespostaLLM:
         logger.debug("Volta %s: %s ferramenta(s)", volta + 1, len(pedidos))
 
     raise ErroLLM(f"Modelo nao concluiu em {MAX_VOLTAS} voltas de ferramenta", uso)
+
+
+PAPEL = {Autor.CLIENTE: "user", Autor.ATENDENTE: "assistant"}
+
+
+def _turnos(historico: tuple[Turno, ...]) -> list[dict]:
+    """Historico como mensagens da API, comecando sempre em `user`.
+
+    A API recusa conversa cuja primeira mensagem e do assistente, e a janela
+    pode muito bem abrir numa fala do atendente — basta a entrada que a
+    motivou ter ficado para tras do recorte. Descartar essas primeiras falas e
+    melhor que um 400 que derruba o atendimento inteiro; o que se perde e o
+    comeco do fio, nao a pergunta.
+    """
+    turnos = list(historico)
+    while turnos and turnos[0].autor != Autor.CLIENTE:
+        turnos.pop(0)
+    return [{"role": PAPEL[turno.autor], "content": turno.texto} for turno in turnos]
 
 
 def _texto_de(resposta) -> str:
