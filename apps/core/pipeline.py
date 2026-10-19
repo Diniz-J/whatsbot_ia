@@ -44,6 +44,7 @@ def responder_mensagem(mensagem_id: int) -> Mensagem | None:
                 tenant_id=mensagem.tenant_id,
                 nome_contato=mensagem.conversa.contato.nome_perfil,
                 historico=_historico(mensagem),
+                contato_id=mensagem.conversa.contato_id,
             ),
         )
         if resposta is None:

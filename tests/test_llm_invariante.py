@@ -20,6 +20,7 @@ def test_cada_ferramenta_e_a_propria_funcao_de_servico():
         "proxima_abertura": catalogo.proxima_abertura,
         "verificar_disponibilidade": reservas.disponibilidade,
         "horarios_livres": reservas.horarios_livres,
+        "fechar_reserva": reservas.criar_reserva,
     }
 
 
@@ -33,6 +34,7 @@ def test_identidade_objeto_a_objeto():
     assert ferramentas.FERRAMENTAS["proxima_abertura"] is catalogo.proxima_abertura
     assert ferramentas.FERRAMENTAS["verificar_disponibilidade"] is reservas.disponibilidade
     assert ferramentas.FERRAMENTAS["horarios_livres"] is reservas.horarios_livres
+    assert ferramentas.FERRAMENTAS["fechar_reserva"] is reservas.criar_reserva
 
 
 def test_nenhuma_ferramenta_declarada_sem_servico_atras():
@@ -50,6 +52,18 @@ def test_nenhum_schema_expoe_o_cliente():
         propriedades = schema["input_schema"]["properties"]
         assert not [p for p in propriedades if "tenant" in p.lower()], schema["name"]
         assert not [p for p in propriedades if "escola" in p.lower()], schema["name"]
+
+
+def test_nenhum_schema_expoe_o_contato():
+    """`contato_id` e injetado pelo executor, como o `tenant_id`.
+
+    Se fosse argumento do modelo, o texto do cliente final poderia pedir
+    reserva no nome de outra pessoa.
+    """
+    for schema in ferramentas.SCHEMAS:
+        propriedades = schema["input_schema"]["properties"]
+        assert not [p for p in propriedades if "contato" in p.lower()], schema["name"]
+        assert not [p for p in propriedades if "telefone" in p.lower()], schema["name"]
 
 
 def test_todo_schema_e_estrito_e_fechado():
@@ -73,19 +87,43 @@ def test_prompt_proibe_afirmar_sem_ferramenta_e_trata_texto_como_dado():
     assert "Cantina do Ze" in texto
 
 
-def test_prompt_proibe_fechar_reserva():
-    """O bot confirma disponibilidade e para ai.
+def test_prompt_so_deixa_afirmar_reserva_depois_da_ferramenta():
+    """O bot fecha reserva, mas nao afirma nada antes da ferramenta.
 
-    Dizer "sua reserva esta feita" sem nada gravado e a pior resposta
-    possivel: o cliente aparece no sabado e nao tem mesa. Enquanto nao houver
-    ferramenta de gravar, o prompt tem que proibir a promessa.
+    Dizer "sua reserva esta feita" sem nada gravado segue sendo a pior
+    resposta possivel: o cliente aparece no sabado e nao tem mesa. Mudou quem
+    fecha, nao a proibicao de prometer.
     """
     from apps.responder.llm.prompt import sistema
 
     texto = sistema("Cantina do Ze")
 
-    assert "NAO fecha reserva" in texto
-    assert "Nunca diga que a reserva esta feita" in texto
+    assert "SO pela ferramenta" in texto
+    assert "antes de a ferramenta confirmar" in texto
+
+
+def test_prompt_manda_perguntar_o_que_falta_para_fechar():
+    """Completar dia, hora ou numero de pessoas por conta propria seria
+    inventar o fato que define a reserva."""
+    from apps.responder.llm.prompt import sistema
+
+    texto = sistema("Cantina do Ze")
+
+    assert "dia, hora e quantas pessoas" in texto
+    assert "Nao complete nenhuma delas" in texto
+
+
+def test_prompt_nao_deixa_cancelar_nem_mudar():
+    """Agora que o bot fecha, o cliente vai pedir para desmarcar.
+
+    Cancelamento nao tem ferramenta nesta fatia, e sem a regra o modelo diria
+    que cancelou.
+    """
+    from apps.responder.llm.prompt import sistema
+
+    texto = sistema("Cantina do Ze")
+
+    assert "Cancelar ou mudar reserva voce NAO faz" in texto
 
 
 def test_prompt_informa_o_agora_para_a_conversao_de_data():
