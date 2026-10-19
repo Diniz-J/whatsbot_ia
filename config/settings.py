@@ -143,7 +143,13 @@ CANAL_EM_MEMORIA = config("CANAL_EM_MEMORIA", default=TESTING, cast=bool)
 ANTHROPIC_API_KEY = "" if TESTING else config("ANTHROPIC_API_KEY", default="")
 LLM_MODEL = config("LLM_MODEL", default="claude-haiku-5-5")
 LLM_EFFORT = config("LLM_EFFORT", default="low")
-LLM_MAX_TOKENS = config("LLM_MAX_TOKENS", default=1024, cast=int)
+# Teto do que o modelo pode gerar numa resposta, nao orcamento de gasto: a
+# cobranca e pelo token realmente gerado, e o prompt ja pede resposta de duas
+# ou tres frases. Folgado de proposito — o teto e compartilhado com o
+# raciocinio do adaptive thinking e com os blocos de pedido de ferramenta, e
+# estourar nao trunca em silencio: o cliente recusa a resposta cortada e cai
+# no tier de regra, que responde pior. 1024 deixava essa margem curta.
+LLM_MAX_TOKENS = config("LLM_MAX_TOKENS", default=16000, cast=int)
 LLM_TIMEOUT = config("LLM_TIMEOUT", default=30.0, cast=float)
 
 # Quanto tempo num estado nao-final conta como travado. Generoso porque o
