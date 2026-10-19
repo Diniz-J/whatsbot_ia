@@ -11,8 +11,8 @@ import pytest
 from django.utils import timezone
 
 from apps.canal.fake import CanalFake
-from apps.conversas.models import Contato, Conversa, EventoWebhook, Mensagem
-from apps.core import tasks
+from apps.conversas.models import JANELA_SERVICO, Contato, Conversa, EventoWebhook, Mensagem
+from apps.core import pipeline, tasks
 from tests.payloads_whatsapp import payload_mensagem
 
 
@@ -173,3 +173,83 @@ def test_entrada_ja_respondida_nao_e_reatendida(restaurante, conversa, canal, se
 
 def test_varredura_sem_nada_pendente_nao_faz_nada(restaurante, canal):
     assert tasks.varrer_pendentes() == {"envios": 0, "entregas": 0, "respostas": 0}
+
+
+def test_entrada_fora_da_janela_nao_e_mais_reatendida(restaurante, conversa, canal):
+    """Passada a janela de 24h o pipeline ja nao consegue responder.
+
+    Sem teto de idade a varredura insiste para sempre numa entrada que o
+    atendimento nunca conclui: o `transaction.atomic` do pipeline desfaz o
+    carimbo de `respondida_em` quando o atendimento estoura excecao, a
+    mensagem volta a ser nula e nada mais a tira da fila. Como `agendar_texto`
+    recusaria o envio com `JanelaFechada`, insistir e so gastar.
+    """
+    mensagem = Mensagem.objects.create(
+        tenant=restaurante,
+        conversa=conversa,
+        direcao=Mensagem.Direcao.ENTRADA,
+        texto="qual o horario?",
+    )
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        criado_em=timezone.now() - JANELA_SERVICO - timedelta(minutes=1)
+    )
+
+    assert tasks.varrer_pendentes()["respostas"] == 0
+
+
+def test_entrada_dentro_da_janela_continua_sendo_reatendida(restaurante, conversa, canal, settings):
+    """O teto nao pode engolir o caso que a varredura existe para resolver."""
+    mensagem = Mensagem.objects.create(
+        tenant=restaurante,
+        conversa=conversa,
+        direcao=Mensagem.Direcao.ENTRADA,
+        texto="qual o horario?",
+    )
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        criado_em=timezone.now() - JANELA_SERVICO + timedelta(hours=1)
+    )
+
+    assert tasks.varrer_pendentes()["respostas"] == 1
+
+
+def test_atendimento_que_estoura_nao_vira_reatendimento_eterno(
+    restaurante, conversa, canal, monkeypatch
+):
+    """Reproduz o loop: excecao no atendimento desfaz o carimbo no rollback.
+
+    Antes do teto, estas voltas se repetiriam a cada varredura indefinidamente,
+    e no tier de IA cada uma pode gastar token antes de estourar.
+    """
+
+    class Explode:
+        def handle(self, pergunta, contexto):
+            raise TypeError("defeito nao previsto no atendimento")
+
+    monkeypatch.setattr(pipeline, "responder_para", lambda configuracao: Explode())
+    # A varredura so enfileira; em teste o Celery roda na hora, e o que
+    # interessa aqui e o que ela escolhe, nao quem executa.
+    enfileiradas = []
+    monkeypatch.setattr(tasks.responder_inbound, "delay", enfileiradas.append)
+
+    mensagem = Mensagem.objects.create(
+        tenant=restaurante,
+        conversa=conversa,
+        direcao=Mensagem.Direcao.ENTRADA,
+        texto="texto que derruba o atendimento",
+    )
+    Mensagem.objects.filter(pk=mensagem.pk).update(criado_em=timezone.now() - timedelta(hours=1))
+
+    # Dentro da janela a varredura insiste, e o rollback mantem o campo nulo.
+    assert tasks.varrer_pendentes()["respostas"] == 1
+    assert enfileiradas == [mensagem.pk]
+    with pytest.raises(TypeError):
+        pipeline.responder_mensagem(mensagem.pk)
+    mensagem.refresh_from_db()
+    assert mensagem.respondida_em is None
+
+    # Passada a janela, para de insistir.
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        criado_em=timezone.now() - JANELA_SERVICO - timedelta(minutes=1)
+    )
+
+    assert tasks.varrer_pendentes()["respostas"] == 0

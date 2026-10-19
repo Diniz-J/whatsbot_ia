@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from apps.canal.base import ErroPermanente, ErroTransitorio
 from apps.canal.fabrica import canal_para
-from apps.conversas.models import EventoWebhook, Mensagem
+from apps.conversas.models import JANELA_SERVICO, EventoWebhook, Mensagem
 from apps.core.pipeline import responder_mensagem
 from apps.core.services import processar_evento
 
@@ -146,6 +146,8 @@ def varrer_pendentes() -> dict[str, int]:
       `responder_inbound` nao chegou a ser enfileirado (processo morto entre o
       commit do evento e o `delay`) ou falhou sem retentativa. O evento ja
       consta como processado, entao a varredura de entregas nao a alcanca.
+      Essa ultima tem teto de idade na janela de servico — ver
+      `_reatender_entradas`.
 
     O limite de tempo e generoso de proposito: o timeout de envio e de
     segundos, entao uma mensagem em `enviando` por mais de alguns minutos nao
@@ -203,6 +205,19 @@ def _reatender_entradas(agora) -> int:
     reservar a mensagem: o `_reservar` do pipeline carimba esse campo com lock
     antes de redigir. Reenfileirar e seguro porque esse mesmo lock impede que
     duas execucoes atendam a mesma entrada.
+
+    Tem teto de idade, e nao so piso, porque sem ele a insistencia e eterna: o
+    `responder_mensagem` roda dentro de `transaction.atomic`, entao um defeito
+    que estoure excecao no atendimento desfaz o carimbo no rollback, a mensagem
+    volta a ser nula e a varredura a escolhe de novo a cada volta — no tier de
+    IA, gastando token em cada uma. A janela de servico e o teto natural:
+    passada ela o `agendar_texto` recusaria o envio com `JanelaFechada`, entao
+    insistir nao entrega nada.
+
+    O teto olha a idade da propria mensagem, enquanto a janela e ancorada na
+    ultima entrada da conversa. Uma mensagem nova do cliente reabre a janela,
+    mas responder a pergunta de ontem nao e o que se quer: a nova tem a
+    resposta dela.
     """
     limite = agora - timedelta(minutes=settings.RESPOSTA_TRAVADA_MINUTOS)
     pendentes = list(
@@ -210,6 +225,7 @@ def _reatender_entradas(agora) -> int:
             direcao=Mensagem.Direcao.ENTRADA,
             respondida_em__isnull=True,
             criado_em__lt=limite,
+            criado_em__gte=agora - JANELA_SERVICO,
         ).values_list("pk", flat=True)
     )
     for mensagem_id in pendentes:
