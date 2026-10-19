@@ -224,13 +224,11 @@ Decidido em out/2026, junto da app `reservas`.
   converteria a partir do que acha que e hoje, que e o tipo de fato que ele
   nao pode tirar da cabeca.
 
-**O bot nao fecha reserva, e isso e dependencia e nao preguica.** Fechar
-exige coletar dia, horario, numero de pessoas e nome ao longo de varias
-mensagens, e hoje **nenhum historico de conversa e passado ao modelo** (limite
-conhecido desde a fatia do `LLMResponder`): a pergunta "para quantas pessoas?"
-sairia e a resposta do cliente chegaria num turno que nao lembra da pergunta.
-O tier de regra entao nao tem como fechar, e o hibrido fecharia errado. A
-ordem e: historico de conversa primeiro, gravacao de reserva depois.
+**O bot nao fecha reserva.** Fechar exige coletar dia, horario, numero de
+pessoas e nome ao longo de varias mensagens. Isso dependia de historico de
+conversa, que **a secao 10 entregou** — o caminho esta aberto, e a gravacao e
+a fatia seguinte. O tier de regra continua sem poder fechar (casa palavra-chave
+numa mensagem isolada); quem fecha e o hibrido.
 
 Quando a gravacao entrar, duas coisas ja estao no lugar e uma falta:
 
@@ -243,3 +241,47 @@ Quando a gravacao entrar, duas coisas ja estao no lugar e uma falta:
 
 **Pedido (`pedido`) nao entrou.** A secao 3 cita "reserva/pedido" na mesma
 app; item, quantidade, total e entrega sao outro dominio, com outra fatia.
+
+
+## 10. Historico de conversa
+
+Decidido em out/2026. Era o limite conhecido desde a fatia do `LLMResponder`:
+cada pergunta era respondida sozinha, entao o atendimento nao conseguia
+perguntar nada — a resposta do cliente chegaria num turno que nao lembra da
+pergunta.
+
+- **O contexto carrega turnos, nao mensagens.** `Turno` tem autor e texto, e
+  mais nada: sem status de entrega, sem id da Meta, sem modelo do ORM. E o que
+  deixa o atendimento receber historico sem passar a conhecer a tabela
+  (invariante 1).
+- **Dois limites, porque cada um sozinho falha.** A janela de servico impede
+  que a conversa da semana passada volte; o teto de turnos
+  (`HISTORICO_MAX_TURNOS`) impede que um dia movimentado vire prompt gigante.
+  A janela e ancorada na mensagem que esta sendo respondida, nao em `agora`:
+  o fio que importa e o dela. O corte pega as mais recentes e so depois
+  reordena, para o teto ficar com o fim da conversa.
+- **Saida entra somente nos status que chegaram ao cliente**
+  (`ENTREGUES_AO_CLIENTE`). Incluir uma que falhou faria o atendimento
+  acreditar que disse algo que o cliente nunca leu, e responder em cima disso.
+- **Mensagem sem texto fica fora** (template puro, audio, imagem): nao ha fala
+  para reproduzir, e bloco de texto vazio a API recusa.
+- **Fala inicial do atendente e descartada na traducao.** A API recusa
+  conversa que comeca pelo assistente, e a janela pode abrir numa fala do
+  atendente. Perder o comeco do fio e melhor que um 400 que derruba o
+  atendimento inteiro.
+- **O tier de regra ignora o historico**, por construcao, com teste fixando
+  que a resposta dele e identica com e sem. Se passasse a depender, teria
+  virado outra coisa sem ninguem pedir.
+
+**Custo:** historico e token de entrada em toda mensagem. Dez turnos curtos
+somam algumas centenas de tokens, que no modelo configurado e fracao de
+centavo por atendimento — mas cresce com o teto, e e por isso que ele e
+configuravel em vez de constante.
+
+**Armadilha para quem ligar cache de prompt:** o prompt de sistema carrega o
+agora do estabelecimento (secao 9, para a conversao de data), e ele muda a
+cada requisicao. Cache e casamento de prefixo, e `system` vem antes de
+`messages` — com a data ali, nada do prefixo casa duas vezes. Hoje nao ha
+`cache_control` em lugar nenhum, entao isso nao custa nada; no dia em que
+alguem ligar cache, a data tem de sair do `system` e ir para o turno do
+cliente, senao o cache nunca acerta.
