@@ -167,6 +167,18 @@ class Mensagem(BaseModelTenant):
         return f"{self.get_direcao_display()}: {self.texto[:40]}"
 
 
+# Status em que a mensagem de saida chegou (ou muito provavelmente chegou) ao
+# cliente. `enviada` entra porque o callback de entrega pode nao ter chegado
+# ainda e o cliente ja estar com ela na tela. `falhou`, `enfileirada` e
+# `enviando` ficam fora: incluir uma delas no historico faria o atendimento
+# acreditar que disse algo que o cliente nunca leu.
+ENTREGUES_AO_CLIENTE = (
+    Mensagem.Status.ENVIADA,
+    Mensagem.Status.ENTREGUE,
+    Mensagem.Status.LIDA,
+)
+
+
 class EventoWebhook(BaseModelTenant):
     """Entrega da Meta gravada crua, antes de qualquer processamento.
 

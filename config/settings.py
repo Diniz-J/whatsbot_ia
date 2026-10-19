@@ -145,6 +145,11 @@ LLM_MODEL = config("LLM_MODEL", default="claude-haiku-5-5")
 LLM_EFFORT = config("LLM_EFFORT", default="low")
 LLM_MAX_TOKENS = config("LLM_MAX_TOKENS", default=1024, cast=int)
 LLM_TIMEOUT = config("LLM_TIMEOUT", default=30.0, cast=float)
+# Quantas falas anteriores o atendimento recebe. Dois limites, porque cada um
+# sozinho falha: o teto de turnos impede que um dia movimentado vire prompt
+# gigante, e a janela de servico (no pipeline) impede que a conversa da semana
+# passada volte. Historico e token de entrada em toda mensagem.
+HISTORICO_MAX_TURNOS = config("HISTORICO_MAX_TURNOS", default=10, cast=int)
 
 # Quanto tempo num estado nao-final conta como travado. Generoso porque o
 # timeout de envio e de segundos: o que passa disto nao esta em voo.

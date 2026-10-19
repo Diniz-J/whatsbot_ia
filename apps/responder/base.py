@@ -8,6 +8,7 @@ de dois produtos.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,27 @@ class Pergunta:
     tipo: str = "text"
 
 
+class Autor(StrEnum):
+    """De quem foi a fala. Nao e direcao de mensagem: direcao e vocabulario de
+    canal, e aqui dentro so existe quem falou."""
+
+    CLIENTE = "cliente"
+    ATENDENTE = "atendente"
+
+
+@dataclass(frozen=True)
+class Turno:
+    """Uma fala anterior do mesmo atendimento.
+
+    Deliberadamente pobre: autor e texto. Nada aqui sabe de status de entrega,
+    id da Meta ou modelo do ORM, e e isso que deixa o atendimento receber
+    historico sem passar a conhecer a tabela de mensagens (invariante 1).
+    """
+
+    autor: Autor
+    texto: str
+
+
 @dataclass(frozen=True)
 class Contexto:
     """O que o atendimento precisa saber para responder.
@@ -26,10 +48,16 @@ class Contexto:
     do contato para a saudacao. Nao carrega a janela de 24h: decidir entre
     texto livre e template e politica de canal, e quem resolve e o
     agendamento, nao quem redige.
+
+    `historico` sao as falas anteriores, da mais antiga para a mais nova, sem
+    a pergunta atual. Tupla e nao lista porque o contexto e congelado e um
+    default mutavel seria compartilhado entre instancias. Vazia quando nao ha
+    o que lembrar, que e o caso do primeiro contato.
     """
 
     tenant_id: int
     nome_contato: str = ""
+    historico: tuple[Turno, ...] = ()
 
 
 @dataclass(frozen=True)
