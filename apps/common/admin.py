@@ -39,6 +39,34 @@ class TenantScopedModelAdmin(ModelAdmin):
 
     campo_tenant = "tenant"
 
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        """Preenche o cliente na instancia ANTES da validacao.
+
+        O `save_model` abaixo tambem grava o campo, mas ele roda depois de o
+        formulario validar — e tarde para qualquer modelo que confira escopo no
+        proprio `clean`. Com o campo fora do formulario, a instancia chega a
+        validacao com `tenant` nulo, e uma checagem como "esta mesa pertence a
+        outro cliente?" compara contra nulo e recusa sempre: o cliente nao
+        conseguia gravar nada. Preenchido aqui, o `clean` enxerga o dono certo
+        e continua pegando a FK de verdade cruzada.
+        """
+        formulario = super().get_form(request, obj, change=change, **kwargs)
+        if request.user.is_superuser or not request.user.tenant_id:
+            # Sem cliente definido nao se adivinha um: o `save_model` recusa a
+            # gravacao e o `get_queryset` nao mostra nada. Falha fechada.
+            return formulario
+
+        campo = f"{self.campo_tenant}_id"
+        tenant_id = request.user.tenant_id
+
+        class FormularioComCliente(formulario):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                if not getattr(self.instance, campo, None):
+                    setattr(self.instance, campo, tenant_id)
+
+        return FormularioComCliente
+
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if request.user.is_superuser:
