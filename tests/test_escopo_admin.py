@@ -10,12 +10,18 @@ import pytest
 from django.contrib.admin.sites import AdminSite
 from django.core.exceptions import PermissionDenied
 from django.test import RequestFactory
+from django.urls import reverse_lazy
 from django.utils import timezone
 
 from apps.common.admin import TenantScopedModelAdmin
 from apps.reservas.admin import ReservaAdmin
 from apps.reservas.models import Mesa, Reserva
 from apps.tenants.models import Configuracao, Tenant, Usuario
+
+# Pela rota nomeada e nao pela URL escrita a mao: o admin nao fica em
+# `/admin/` e o prefixo vem de `ADMIN_URL`, entao fixar o caminho faria estes
+# testes quebrarem por mudanca de configuracao, nao por perda de escopo.
+AREA_DA_OPERACAO = reverse_lazy("admin:tenants_configuracao_changelist")
 
 
 @pytest.fixture
@@ -104,7 +110,7 @@ def test_cliente_nao_acessa_a_area_da_operacao(client, usuario_restaurante):
     """Tier e token de WhatsApp sao da operacao: o cliente nao chega neles."""
     client.force_login(usuario_restaurante)
 
-    resposta = client.get("/painel/tenants/configuracao/")
+    resposta = client.get(AREA_DA_OPERACAO)
 
     assert resposta.status_code == 403
 
@@ -113,7 +119,7 @@ def test_cliente_nao_acessa_a_area_da_operacao(client, usuario_restaurante):
 def test_operacao_acessa_a_area_da_operacao(client, operacao):
     client.force_login(operacao)
 
-    assert client.get("/painel/tenants/configuracao/").status_code == 200
+    assert client.get(AREA_DA_OPERACAO).status_code == 200
 
 
 @pytest.mark.django_db
