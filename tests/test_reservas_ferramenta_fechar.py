@@ -76,6 +76,20 @@ def test_segunda_chamada_avisa_que_ja_estava_fechada(restaurante, contato, casa_
     assert Reserva.objects.count() == 1
 
 
+def test_a_hora_dita_ao_cliente_esta_no_fuso_do_negocio(restaurante, contato, casa_aberta):
+    """O banco guarda em UTC, e reserva lida de volta chega adiantada.
+
+    O caminho idempotente le do banco, entao dizia "as 23:00" para quem
+    reservou as 20:00. A hora errada chegava ao cliente, nao ao log.
+    """
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    nova = fechar(restaurante, contato.pk)
+    do_banco = fechar(restaurante, contato.pk)
+
+    assert "as 20:00" in nova
+    assert "as 20:00" in do_banco
+
+
 def test_sem_contato_no_contexto_nao_afirma_que_fechou(restaurante, casa_aberta):
     """Caminho que nao existe no atendimento normal; se acontecer, o modelo
     tem que oferecer uma pessoa em vez de dizer que fechou."""

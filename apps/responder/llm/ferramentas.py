@@ -402,6 +402,17 @@ def _responder_fechar_reserva(funcao, argumentos: dict, tenant_id: int, contato_
 
     aviso = "" if criada else " (ja estava fechada antes deste pedido)"
     return (
-        f"RESERVA CONFIRMADA{aviso}: {reserva.inicio:%d/%m as %H:%M} para "
+        f"RESERVA CONFIRMADA{aviso}: {_quando(reserva.inicio)} para "
         f"{reserva.pessoas} pessoas, no nome de {reserva.nome}."
     )
+
+
+def _quando(instante: datetime) -> str:
+    """Dia e hora no fuso do estabelecimento.
+
+    `timezone.localtime` nao e enfeite: o banco guarda em UTC, entao reserva
+    lida de volta chega tres horas adiantada no Brasil. Formatar direto dizia
+    "as 23:00" para quem reservou as 20:00 — e a hora errada chegava ao
+    cliente, nao ao log.
+    """
+    return f"{timezone.localtime(instante):%d/%m as %H:%M}"
