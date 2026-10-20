@@ -1,8 +1,9 @@
 """Varredura do que ficou preso num estado nao-final.
 
-Sem ela, duas coisas somem em silencio: mensagem reservada cujo worker morreu
-(ninguem mais a reclama, porque o claim impede), e entrega gravada cujo
-enfileiramento se perdeu.
+Sem ela, quatro coisas somem em silencio: mensagem reservada cujo worker
+morreu (ninguem mais a reclama, porque o claim impede), saida gravada que
+nunca foi reclamada, entrega gravada cujo enfileiramento se perdeu e entrada
+que nunca foi atendida.
 """
 
 from datetime import timedelta
@@ -84,6 +85,80 @@ def test_mensagem_ja_enviada_nao_e_varrida(restaurante, conversa, canal, setting
     envenelhecer_mensagem(mensagem, settings.ENVIO_TRAVADO_MINUTOS + 10)
 
     assert tasks.varrer_pendentes()["envios"] == 0
+    assert canal.enviadas == []
+
+
+def saida_parada(restaurante, conversa, template="", idade_em_minutos=0):
+    """Mensagem gravada que nunca foi reclamada pela tarefa de envio."""
+    mensagem = Mensagem.objects.create(
+        tenant=restaurante,
+        conversa=conversa,
+        direcao=Mensagem.Direcao.SAIDA,
+        status=Mensagem.Status.ENFILEIRADA,
+        texto="oi",
+        template=template,
+    )
+    if idade_em_minutos:
+        Mensagem.objects.filter(pk=mensagem.pk).update(
+            atualizado_em=timezone.now() - timedelta(minutes=idade_em_minutos),
+            criado_em=timezone.now() - timedelta(minutes=idade_em_minutos),
+        )
+    return mensagem
+
+
+def test_saida_parada_na_fila_volta_a_ser_enviada(restaurante, conversa, canal, settings):
+    """O `enviando` tem quem o reclame; o `enfileirada` nao tinha.
+
+    Acontece quando o enfileiramento nao chegou ao broker, quando o worker
+    morreu antes de reservar, ou quando as retentativas se esgotaram — e nos
+    tres a resposta nunca sai.
+    """
+    mensagem = saida_parada(
+        restaurante, conversa, idade_em_minutos=settings.ENVIO_TRAVADO_MINUTOS + 1
+    )
+
+    assert tasks.varrer_pendentes()["saidas_paradas"] == 1
+
+    mensagem.refresh_from_db()
+    assert mensagem.status == Mensagem.Status.ENVIADA
+    assert len(canal.enviadas) == 1
+
+
+def test_saida_recem_enfileirada_espera(restaurante, conversa, canal):
+    """A tarefa recem-enfileirada ainda vai rodar; reclamar agora duplicaria."""
+    saida_parada(restaurante, conversa)
+
+    assert tasks.varrer_pendentes()["saidas_paradas"] == 0
+    assert canal.enviadas == []
+
+
+def test_saida_fora_da_janela_nao_e_mais_reenfileirada(restaurante, conversa, canal):
+    """Teto de idade, como no reatendimento: fora da janela de 24h a Meta
+    recusa texto livre, entao insistir nao entrega nada."""
+    saida_parada(
+        restaurante,
+        conversa,
+        idade_em_minutos=int(JANELA_SERVICO.total_seconds() // 60) + 1,
+    )
+
+    assert tasks.varrer_pendentes()["saidas_paradas"] == 0
+    assert canal.enviadas == []
+
+
+def test_template_parado_nao_e_reenfileirado_as_cegas(restaurante, conversa, canal, settings):
+    """Idioma e variaveis vao como argumento da tarefa, nao na linha.
+
+    Reenfileirar pelo id mandaria o template sem os dados que ele preenche.
+    Enquanto nao estiverem gravados, aparecer como pendente e melhor.
+    """
+    saida_parada(
+        restaurante,
+        conversa,
+        template="confirmacao_reserva",
+        idade_em_minutos=settings.ENVIO_TRAVADO_MINUTOS + 1,
+    )
+
+    assert tasks.varrer_pendentes()["saidas_paradas"] == 0
     assert canal.enviadas == []
 
 
@@ -172,7 +247,12 @@ def test_entrada_ja_respondida_nao_e_reatendida(restaurante, conversa, canal, se
 
 
 def test_varredura_sem_nada_pendente_nao_faz_nada(restaurante, canal):
-    assert tasks.varrer_pendentes() == {"envios": 0, "entregas": 0, "respostas": 0}
+    assert tasks.varrer_pendentes() == {
+        "envios": 0,
+        "saidas_paradas": 0,
+        "entregas": 0,
+        "respostas": 0,
+    }
 
 
 def test_entrada_fora_da_janela_nao_e_mais_reatendida(restaurante, conversa, canal):

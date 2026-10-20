@@ -136,10 +136,13 @@ def _configuracao(mensagem: Mensagem):
 def varrer_pendentes() -> dict[str, int]:
     """Recupera o que ficou preso num estado nao-final.
 
-    Tres coisas travam sem isto, e as tres sao perda silenciosa:
+    Quatro coisas travam sem isto, e as quatro sao perda silenciosa:
 
     - Mensagem reservada (`enviando`) cujo worker morreu antes da resposta.
       Ninguem mais a reclama, porque o claim justamente impede isso.
+    - Mensagem de saida que ficou `enfileirada` sem nunca ser reclamada,
+      quando o enfileiramento nao chegou ao broker ou as retentativas de
+      `ErroTransitorio` se esgotaram — ver `_reenfileirar_saidas`.
     - Entrega gravada que nunca foi processada, quando o enfileiramento se
       perdeu e a Meta nao reenviou.
     - Mensagem de entrada ja gravada que nunca foi atendida, quando o
@@ -157,17 +160,25 @@ def varrer_pendentes() -> dict[str, int]:
     """
     agora = timezone.now()
     reenfileiradas = _destravar_envios(agora)
+    paradas = _reenfileirar_saidas(agora)
     reprocessados = _reprocessar_entregas(agora)
     reatendidas = _reatender_entradas(agora)
 
-    if reenfileiradas or reprocessados or reatendidas:
+    if reenfileiradas or paradas or reprocessados or reatendidas:
         logger.warning(
-            "Varredura destravou %s envio(s), %s entrega(s) e %s resposta(s)",
+            "Varredura destravou %s envio(s), %s saida(s) parada(s), "
+            "%s entrega(s) e %s resposta(s)",
             reenfileiradas,
+            paradas,
             reprocessados,
             reatendidas,
         )
-    return {"envios": reenfileiradas, "entregas": reprocessados, "respostas": reatendidas}
+    return {
+        "envios": reenfileiradas,
+        "saidas_paradas": paradas,
+        "entregas": reprocessados,
+        "respostas": reatendidas,
+    }
 
 
 def _destravar_envios(agora) -> int:
@@ -184,6 +195,42 @@ def _destravar_envios(agora) -> int:
     for mensagem_id in travadas:
         enviar_outbound.delay(mensagem_id)
     return len(travadas)
+
+
+def _reenfileirar_saidas(agora) -> int:
+    """Reenfileira saida que ficou `enfileirada` sem nunca ser reclamada.
+
+    O `_destravar_envios` acima nao alcanca este caso: ele procura o que foi
+    reservado (`enviando`) e nunca terminou. Tres caminhos deixam a mensagem
+    gravada e parada antes disso, e nos tres a resposta simplesmente nunca sai:
+
+    - o `delay` do `on_commit` nao chegou ao broker (Redis fora do ar);
+    - o worker morreu entre receber a tarefa e reservar a mensagem;
+    - o `enviar_outbound` esgotou as retentativas de `ErroTransitorio`, que
+      devolvem o status para `enfileirada` antes de relancar.
+
+    Teto de idade na janela de servico, pelo mesmo motivo do
+    `_reatender_entradas`: passada ela a Meta recusa texto livre, entao
+    insistir nao entrega nada.
+
+    Template fica de fora: o idioma e as variaveis vao como argumento da
+    tarefa e nao estao gravados na mensagem, entao reenfileirar um mandaria
+    template sem os dados que ele preenche. Enquanto nao estiverem na linha,
+    recuperar template as cegas e pior que deixar aparecer como pendente.
+    """
+    limite = agora - timedelta(minutes=settings.ENVIO_TRAVADO_MINUTOS)
+    paradas = list(
+        Mensagem.objects.filter(
+            direcao=Mensagem.Direcao.SAIDA,
+            status=Mensagem.Status.ENFILEIRADA,
+            template="",
+            atualizado_em__lt=limite,
+            criado_em__gte=agora - JANELA_SERVICO,
+        ).values_list("pk", flat=True)
+    )
+    for mensagem_id in paradas:
+        enviar_outbound.delay(mensagem_id)
+    return len(paradas)
 
 
 def _reprocessar_entregas(agora) -> int:
