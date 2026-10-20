@@ -58,6 +58,10 @@ class Contexto:
     tenant_id: int
     nome_contato: str = ""
     historico: tuple[Turno, ...] = ()
+    # Quem esta falando, para a ferramenta que escreve saber em nome de quem.
+    # Nao e argumento do modelo, pelo mesmo motivo do `tenant_id`: se fosse, o
+    # texto do cliente final poderia pedir reserva no nome de outra pessoa.
+    contato_id: int | None = None
 
 
 @dataclass(frozen=True)

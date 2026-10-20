@@ -61,6 +61,7 @@ def conversar(
     pergunta: str,
     tenant_id: int,
     historico: tuple[Turno, ...] = (),
+    contato_id: int | None = None,
 ) -> RespostaLLM:
     """Pergunta ao modelo, roda as ferramentas que ele pedir, devolve o texto.
 
@@ -121,7 +122,10 @@ def conversar(
                         "type": "tool_result",
                         "tool_use_id": pedido.id,
                         "content": ferramentas.executar(
-                            pedido.name, dict(pedido.input or {}), tenant_id
+                            pedido.name,
+                            dict(pedido.input or {}),
+                            tenant_id,
+                            contato_id=contato_id,
                         ),
                     }
                     for pedido in pedidos

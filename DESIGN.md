@@ -224,20 +224,43 @@ Decidido em out/2026, junto da app `reservas`.
   converteria a partir do que acha que e hoje, que e o tipo de fato que ele
   nao pode tirar da cabeca.
 
-**O bot nao fecha reserva.** Fechar exige coletar dia, horario, numero de
-pessoas e nome ao longo de varias mensagens. Isso dependia de historico de
-conversa, que **a secao 10 entregou** — o caminho esta aberto, e a gravacao e
-a fatia seguinte. O tier de regra continua sem poder fechar (casa palavra-chave
-numa mensagem isolada); quem fecha e o hibrido.
+**O bot fecha reserva** (fatia de out/2026, depois do historico da secao 10).
+O tier de regra continua sem poder fechar — casa palavra-chave numa mensagem
+isolada, nao coleta dia nem numero de pessoas; quem fecha e o hibrido.
 
-Quando a gravacao entrar, duas coisas ja estao no lugar e uma falta:
+- **A confirmacao e a resposta normal do atendimento, dentro da janela de
+  24h**: texto livre, que a Meta nao cobra. Decisao tomada junto da fatia.
+  **Nao ha template e nao ha lembrete na vespera** — lembrete seria template,
+  e template e cobrado (secao 7). Quando valer a pena, e fatia propria com
+  custo proprio.
+- **A disponibilidade e reconferida no fechamento, nunca assumida.** O modelo
+  pode pedir sem ter consultado, ou ter consultado antes de a mesa ser tomada.
+  E o invariante 2 no caminho que mais doi: afirmar reserva feita sem isso
+  termina com o cliente na porta no sabado.
+- **Fechar duas vezes nao gasta duas mesas.** Reserva do mesmo contato que se
+  sobrepoe ao intervalo pedido e devolvida em vez de criada. O criterio e
+  sobreposicao e nao igualdade: quem tem 20h e pede 20h30 quer a mesma noite.
+  Sem isso, o modelo chamando a ferramenta duas vezes na mesma volta sentaria
+  uma pessoa em duas mesas.
+- **O contato vem do contexto, nunca do modelo**, como o `tenant_id`: fosse
+  argumento, o texto do cliente final poderia pedir reserva no nome de outra
+  pessoa. O nome gravado sai do perfil do contato (ou do telefone), porque a
+  identidade e o numero e o nome e rotulo para a equipe ler.
+- **Menor mesa que serve**, porque queimar a de seis num casal custa a de
+  seis.
+- **Teto de reservas futuras por contato**, para o bot nao virar a ferramenta
+  mais facil de bloquear a agenda da casa.
+- **Cancelar e remarcar nao tem ferramenta**, e o prompt manda chamar uma
+  pessoa. Agora que o bot fecha, o cliente vai pedir — sem a regra o modelo
+  diria que cancelou. E a fatia seguinte obvia.
 
-- A idempotencia do inbound ja existe — `pipeline.responder_mensagem` tranca
-  `respondida_em`, entao a mesma entrega reprocessada nao roda o atendimento
-  duas vezes e nao reserva em dobro.
-- A restricao do banco ja recusa a mesa dupla.
-- Falta decidir a confirmacao: resposta na janela de 24h e gratis, mas
-  lembrete na vespera e template, e template e cobrado (secao 7).
+**Caso deliberado que parece defeito:** entrada que ficou mais de 24h na fila
+grava a reserva e **perde a confirmacao**. O `Responder` nao conhece a janela
+de proposito (e politica de canal, secao 4) e a ferramenta roda antes de o
+envio ser tentado, entao a ordem nao da para inverter sem o atendimento passar
+a conhecer o canal. O cliente pediu a reserva, a equipe ve no back-office e
+tem o telefone; mandar por template seria gastar para entregar resposta velha.
+Esta travado em teste para ser escolha e nao acidente.
 
 **Pedido (`pedido`) nao entrou.** A secao 3 cita "reserva/pedido" na mesma
 app; item, quantidade, total e entrega sao outro dominio, com outra fatia.

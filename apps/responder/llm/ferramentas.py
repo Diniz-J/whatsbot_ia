@@ -31,11 +31,34 @@ FERRAMENTAS = {
     "proxima_abertura": catalogo.proxima_abertura,
     "verificar_disponibilidade": reservas.disponibilidade,
     "horarios_livres": reservas.horarios_livres,
+    "fechar_reserva": reservas.criar_reserva,
 }
 
 # Teto de horarios sugeridos numa resposta. Um dia inteiro de meia em meia
 # hora passa de quarenta, e cada um deles e token pago numa pergunta so.
 LIMITE_DE_HORARIOS = 12
+
+# Teto do recado que o modelo grava na reserva. O campo e texto livre que a
+# equipe le, e quem dita o conteudo e o cliente final: sem teto, uma mensagem
+# enorme entraria crua no banco.
+LIMITE_DA_OBSERVACAO = 300
+
+# Motivo da recusa -> o que o modelo precisa ler para dizer a coisa certa. O
+# servico devolve codigo e nao frase (ele nao conhece canal); o mapa mora aqui.
+RECUSA = {
+    reservas.Motivo.PASSADO: "NAO FECHADA: o horario pedido ja passou.",
+    reservas.Motivo.FECHADO: "NAO FECHADA: nao ha atendimento nesse horario.",
+    reservas.Motivo.SEM_MESA: (
+        "NAO FECHADA: nao ha mesa livre nesse horario para esse numero de pessoas."
+    ),
+    reservas.Motivo.LIMITE: (
+        "NAO FECHADA: este contato ja tem o maximo de reservas futuras. "
+        "Para mais, a equipe precisa resolver."
+    ),
+    reservas.Motivo.CORRIDA: (
+        "NAO FECHADA: a mesa foi reservada por outra pessoa agora mesmo. Ofereca outro horario."
+    ),
+}
 
 # `strict` garante argumento que casa com o schema; `additionalProperties:
 # false` e exigido por ele.
@@ -143,6 +166,41 @@ SCHEMAS = [
         },
     },
     {
+        "name": "fechar_reserva",
+        "description": (
+            "Fecha a reserva em nome de quem esta conversando. Chame somente "
+            "quando o cliente ja tiver dito o dia, a hora e quantas pessoas, e "
+            "tiver confirmado que quer reservar. Nunca diga que a reserva esta "
+            "feita antes de esta ferramenta confirmar."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "data_hora": {
+                    "type": "string",
+                    "description": (
+                        "Dia e hora em ISO 8601, como 2026-03-07T20:00. Converta "
+                        "'amanha' ou 'sabado' usando o agora do sistema."
+                    ),
+                },
+                "pessoas": {
+                    "type": "integer",
+                    "description": "Quantas pessoas vao sentar. Pergunte; nunca chute.",
+                },
+                "observacao": {
+                    "type": "string",
+                    "description": (
+                        "Recado curto do cliente para a equipe, como aniversario ou "
+                        "acessibilidade. Vazio quando nao houver."
+                    ),
+                },
+            },
+            "required": ["data_hora", "pessoas"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "horarios_livres",
         "description": (
             "Lista os horarios de um dia em que sobra mesa para o grupo. Use "
@@ -171,7 +229,7 @@ SCHEMAS = [
 DIAS = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom")
 
 
-def executar(nome: str, argumentos: dict, tenant_id: int) -> str:
+def executar(nome: str, argumentos: dict, tenant_id: int, contato_id: int | None = None) -> str:
     """Roda a ferramenta e devolve o resultado como texto para o modelo ler.
 
     Nome fora do registry e erro de dado, nao excecao: o modelo as vezes
@@ -195,6 +253,8 @@ def executar(nome: str, argumentos: dict, tenant_id: int) -> str:
         return _responder_disponibilidade(funcao, argumentos, tenant_id)
     if nome == "horarios_livres":
         return _responder_horarios_livres(funcao, argumentos, tenant_id)
+    if nome == "fechar_reserva":
+        return _responder_fechar_reserva(funcao, argumentos, tenant_id, contato_id)
 
     abertura = funcao(tenant_id)
     if abertura is None:
@@ -312,3 +372,36 @@ def _pessoas(valor) -> int | None:
     except (TypeError, ValueError):
         return None
     return quantas if quantas >= 1 else None
+
+
+def _responder_fechar_reserva(funcao, argumentos: dict, tenant_id: int, contato_id) -> str:
+    """Fecha a reserva e devolve ao modelo o que ele pode afirmar.
+
+    `contato_id` vem do contexto e nao do modelo: se fosse argumento, o texto
+    do cliente final poderia pedir reserva no nome de outra pessoa.
+    """
+    if contato_id is None:
+        # Caminho sem contato conhecido nao existe no atendimento normal.
+        # Devolver como dado deixa o modelo oferecer uma pessoa em vez de
+        # afirmar que fechou.
+        logger.warning("Fechamento de reserva pedido sem contato no contexto")
+        return "NAO FECHADA: nao foi possivel identificar quem esta pedindo."
+
+    quando = _instante(argumentos.get("data_hora"))
+    pessoas = _pessoas(argumentos.get("pessoas"))
+    if quando is None:
+        return "Data e hora invalidas. Mande em ISO 8601, como 2026-03-07T20:00."
+    if pessoas is None:
+        return "Numero de pessoas invalido. Mande um inteiro a partir de 1."
+
+    observacao = str(argumentos.get("observacao") or "")[:LIMITE_DA_OBSERVACAO]
+    try:
+        reserva, criada = funcao(tenant_id, contato_id, quando, pessoas, observacao)
+    except reservas.ReservaRecusada as recusa:
+        return RECUSA[recusa.motivo]
+
+    aviso = "" if criada else " (ja estava fechada antes deste pedido)"
+    return (
+        f"RESERVA CONFIRMADA{aviso}: {reserva.inicio:%d/%m as %H:%M} para "
+        f"{reserva.pessoas} pessoas, no nome de {reserva.nome}."
+    )
