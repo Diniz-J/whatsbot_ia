@@ -55,6 +55,9 @@ RECUSA = {
         "NAO FECHADA: este contato ja tem o maximo de reservas futuras. "
         "Para mais, a equipe precisa resolver."
     ),
+    reservas.Motivo.SEM_RESERVA: (
+        "NAO FEITO: este contato nao tem reserva futura para cancelar ou remarcar."
+    ),
     reservas.Motivo.CORRIDA: (
         "NAO FECHADA: a mesa foi reservada por outra pessoa agora mesmo. Ofereca outro horario."
     ),
