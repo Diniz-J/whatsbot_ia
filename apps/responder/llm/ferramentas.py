@@ -317,10 +317,14 @@ def _responder_disponibilidade(funcao, argumentos: dict, tenant_id: int) -> str:
         return f"SEM MESA LIVRE em {quando:%d/%m as %H:%M} para {pessoas} pessoas."
 
     horas = (resultado.fim - resultado.inicio).total_seconds() / 3600
+    # O fechamento e do bot desde a fatia do `fechar_reserva`, e resultado de
+    # ferramenta pesa mais no modelo que o prompt de sistema: dizer aqui que
+    # quem fecha e a equipe faria ele prometer ligacao justo depois de
+    # confirmar que ha mesa, e a conversa morreria onde deveria fechar.
     return (
         f"HA MESA em {quando:%d/%m as %H:%M} para {pessoas} pessoas. "
-        f"A mesa fica reservada por {horas:.0f}h. A reserva nao esta feita: "
-        "quem fecha e a equipe."
+        f"A mesa fica reservada por {horas:.0f}h. A reserva ainda NAO esta "
+        "feita: confirme o pedido com o cliente e chame fechar_reserva."
     )
 
 
