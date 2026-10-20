@@ -211,3 +211,46 @@ def test_periodo_do_mes_usa_o_fuso_local():
         timezone.deactivate()
 
     assert inicio.astimezone(UTC) == datetime(2026, 1, 1, 3, 0, tzinfo=UTC)
+
+
+def test_tokens_no_periodo_soma_as_duas_direcoes(restaurante, conversa, janeiro):
+    inicio, _ = janeiro
+    dia = inicio + timedelta(days=2)
+    mensagem(conversa, Mensagem.Direcao.SAIDA, dia, tokens_entrada=200, tokens_saida=40)
+    mensagem(conversa, Mensagem.Direcao.SAIDA, dia, tokens_entrada=150, tokens_saida=30)
+
+    assert services.tokens_no_periodo(restaurante.pk, *janeiro) == 420
+
+
+def test_tokens_no_periodo_respeita_o_recorte(restaurante, conversa, janeiro):
+    inicio, fim = janeiro
+    mensagem(conversa, Mensagem.Direcao.SAIDA, inicio, tokens_entrada=10, tokens_saida=1)
+    mensagem(conversa, Mensagem.Direcao.SAIDA, fim, tokens_entrada=900, tokens_saida=900)
+
+    assert services.tokens_no_periodo(restaurante.pk, inicio, fim) == 11
+
+
+def test_tokens_no_periodo_nao_ve_o_vizinho(restaurante, clinica, janeiro):
+    inicio, _ = janeiro
+    vizinha = conversa_de(clinica, telefone="5511888888888")
+    mensagem(vizinha, Mensagem.Direcao.SAIDA, inicio, tokens_entrada=900, tokens_saida=900)
+
+    assert services.tokens_no_periodo(restaurante.pk, *janeiro) == 0
+
+
+def test_tokens_no_periodo_cabe_numa_consulta(
+    restaurante, conversa, janeiro, django_assert_num_queries
+):
+    """O teto de gasto consulta isto a cada mensagem que chega."""
+    inicio, _ = janeiro
+    mensagem(conversa, Mensagem.Direcao.SAIDA, inicio, tokens_entrada=10, tokens_saida=5)
+
+    with django_assert_num_queries(1):
+        assert services.tokens_no_periodo(restaurante.pk, *janeiro) == 15
+
+
+def test_tokens_do_mes_corrente_usa_o_mes_de_hoje(restaurante, conversa):
+    agora = timezone.now()
+    mensagem(conversa, Mensagem.Direcao.SAIDA, agora, tokens_entrada=100, tokens_saida=20)
+
+    assert services.tokens_do_mes_corrente(restaurante.pk) == 120
