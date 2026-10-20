@@ -156,6 +156,15 @@ LLM_TIMEOUT = config("LLM_TIMEOUT", default=30.0, cast=float)
 # gigante, e a janela de servico (no pipeline) impede que a conversa da semana
 # passada volte. Historico e token de entrada em toda mensagem.
 HISTORICO_MAX_TURNOS = config("HISTORICO_MAX_TURNOS", default=10, cast=int)
+# Teto de token por mes de calendario. Passando dele, o atendimento cai no
+# tier de regra: o cliente continua sendo atendido, pior, e a conta para de
+# crescer. Zero desliga.
+#
+# Nasce desligado de proposito. O numero depende do volume real do cliente, e
+# um default generoso cortaria o servico de quem manda mais mensagem do que eu
+# supus — pior que nao ter teto. O `manage.py metricas_resumo` da o numero
+# medido para preencher aqui.
+LLM_TETO_TOKENS_MES = config("LLM_TETO_TOKENS_MES", default=0, cast=int)
 
 # Quanto tempo num estado nao-final conta como travado. Generoso porque o
 # timeout de envio e de segundos: o que passa disto nao esta em voo.
