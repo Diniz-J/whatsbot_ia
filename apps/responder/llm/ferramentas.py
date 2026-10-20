@@ -32,6 +32,8 @@ FERRAMENTAS = {
     "verificar_disponibilidade": reservas.disponibilidade,
     "horarios_livres": reservas.horarios_livres,
     "fechar_reserva": reservas.criar_reserva,
+    "cancelar_reserva": reservas.cancelar_reserva,
+    "remarcar_reserva": reservas.remarcar_reserva,
 }
 
 # Teto de horarios sugeridos numa resposta. Um dia inteiro de meia em meia
@@ -43,23 +45,19 @@ LIMITE_DE_HORARIOS = 12
 # enorme entraria crua no banco.
 LIMITE_DA_OBSERVACAO = 300
 
-# Motivo da recusa -> o que o modelo precisa ler para dizer a coisa certa. O
-# servico devolve codigo e nao frase (ele nao conhece canal); o mapa mora aqui.
+# Motivo da recusa -> o motivo em palavras, sem o verbo. O servico devolve
+# codigo e nao frase (ele nao conhece canal), e o prefixo vem de quem chamou:
+# "nao fechada" numa tentativa de remarcar diria a coisa errada ao cliente.
 RECUSA = {
-    reservas.Motivo.PASSADO: "NAO FECHADA: o horario pedido ja passou.",
-    reservas.Motivo.FECHADO: "NAO FECHADA: nao ha atendimento nesse horario.",
-    reservas.Motivo.SEM_MESA: (
-        "NAO FECHADA: nao ha mesa livre nesse horario para esse numero de pessoas."
-    ),
+    reservas.Motivo.PASSADO: "o horario pedido ja passou.",
+    reservas.Motivo.FECHADO: "nao ha atendimento nesse horario.",
+    reservas.Motivo.SEM_MESA: "nao ha mesa livre nesse horario para esse numero de pessoas.",
     reservas.Motivo.LIMITE: (
-        "NAO FECHADA: este contato ja tem o maximo de reservas futuras. "
-        "Para mais, a equipe precisa resolver."
+        "este contato ja tem o maximo de reservas futuras. A equipe precisa resolver."
     ),
-    reservas.Motivo.SEM_RESERVA: (
-        "NAO FEITO: este contato nao tem reserva futura para cancelar ou remarcar."
-    ),
+    reservas.Motivo.SEM_RESERVA: "este contato nao tem reserva futura.",
     reservas.Motivo.CORRIDA: (
-        "NAO FECHADA: a mesa foi reservada por outra pessoa agora mesmo. Ofereca outro horario."
+        "a mesa foi reservada por outra pessoa agora mesmo. Ofereca outro horario."
     ),
 }
 
@@ -204,6 +202,50 @@ SCHEMAS = [
         },
     },
     {
+        "name": "cancelar_reserva",
+        "description": (
+            "Cancela a PROXIMA reserva de quem esta conversando. Nao escolhe "
+            "qual: e sempre a proxima. Cancelar nao se desfaz, entao chame "
+            "somente depois que o cliente disser claramente que quer cancelar."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "remarcar_reserva",
+        "description": (
+            "Move a PROXIMA reserva de quem esta conversando para outro "
+            "horario. Nao cria reserva nova nem escolhe qual mover."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nova_data_hora": {
+                    "type": "string",
+                    "description": (
+                        "Novo dia e hora em ISO 8601, como 2026-03-07T21:00. "
+                        "Converta termos relativos usando o agora do sistema."
+                    ),
+                },
+                "pessoas": {
+                    "type": "integer",
+                    "description": (
+                        "Novo numero de pessoas, somente se o cliente disse que "
+                        "mudou. Omita para manter o que estava."
+                    ),
+                },
+            },
+            "required": ["nova_data_hora"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "horarios_livres",
         "description": (
             "Lista os horarios de um dia em que sobra mesa para o grupo. Use "
@@ -258,6 +300,10 @@ def executar(nome: str, argumentos: dict, tenant_id: int, contato_id: int | None
         return _responder_horarios_livres(funcao, argumentos, tenant_id)
     if nome == "fechar_reserva":
         return _responder_fechar_reserva(funcao, argumentos, tenant_id, contato_id)
+    if nome == "cancelar_reserva":
+        return _responder_cancelar(funcao, tenant_id, contato_id)
+    if nome == "remarcar_reserva":
+        return _responder_remarcar(funcao, argumentos, tenant_id, contato_id)
 
     abertura = funcao(tenant_id)
     if abertura is None:
@@ -401,7 +447,7 @@ def _responder_fechar_reserva(funcao, argumentos: dict, tenant_id: int, contato_
     try:
         reserva, criada = funcao(tenant_id, contato_id, quando, pessoas, observacao)
     except reservas.ReservaRecusada as recusa:
-        return RECUSA[recusa.motivo]
+        return f"NAO FECHADA: {RECUSA[recusa.motivo]}"
 
     aviso = "" if criada else " (ja estava fechada antes deste pedido)"
     return (
@@ -419,3 +465,46 @@ def _quando(instante: datetime) -> str:
     cliente, nao ao log.
     """
     return f"{timezone.localtime(instante):%d/%m as %H:%M}"
+
+
+def _responder_cancelar(funcao, tenant_id: int, contato_id) -> str:
+    """Cancela a proxima reserva e diz qual era.
+
+    O texto nomeia dia e hora para o modelo poder confirmar ao cliente O QUE
+    foi cancelado. Sem isso, quem tem duas reservas ouviria "cancelado" e nao
+    saberia qual.
+    """
+    if contato_id is None:
+        logger.warning("Cancelamento pedido sem contato no contexto")
+        return "NAO CANCELADA: nao foi possivel identificar quem esta pedindo."
+
+    try:
+        reserva = funcao(tenant_id, contato_id)
+    except reservas.ReservaRecusada as recusa:
+        return f"NAO CANCELADA: {RECUSA[recusa.motivo]}"
+
+    return f"RESERVA CANCELADA: a de {_quando(reserva.inicio)} para {reserva.pessoas} pessoas."
+
+
+def _responder_remarcar(funcao, argumentos: dict, tenant_id: int, contato_id) -> str:
+    if contato_id is None:
+        logger.warning("Remarcacao pedida sem contato no contexto")
+        return "NAO REMARCADA: nao foi possivel identificar quem esta pedindo."
+
+    quando = _instante(argumentos.get("nova_data_hora"))
+    if quando is None:
+        return "Data e hora invalidas. Mande em ISO 8601, como 2026-03-07T21:00."
+
+    # `pessoas` omitido mantem o que estava; invalido e erro, nao omissao.
+    pessoas = None
+    if argumentos.get("pessoas") is not None:
+        pessoas = _pessoas(argumentos.get("pessoas"))
+        if pessoas is None:
+            return "Numero de pessoas invalido. Mande um inteiro a partir de 1."
+
+    try:
+        reserva = funcao(tenant_id, contato_id, quando, pessoas)
+    except reservas.ReservaRecusada as recusa:
+        return f"NAO REMARCADA: {RECUSA[recusa.motivo]}"
+
+    return f"RESERVA REMARCADA: agora e {_quando(reserva.inicio)} para {reserva.pessoas} pessoas."
