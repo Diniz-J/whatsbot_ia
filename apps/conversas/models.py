@@ -152,6 +152,21 @@ class Mensagem(BaseModelTenant):
         verbose_name = "mensagem"
         verbose_name_plural = "mensagens"
         ordering = ["criado_em"]
+        indexes = [
+            # O historico da conversa: roda em toda mensagem de entrada do
+            # tier de IA, buscando as ultimas falas de um fio so. Sem este
+            # indice e varredura da tabela que mais cresce no banco.
+            models.Index(fields=["conversa", "-criado_em"], name="mensagem_fio_recente"),
+            # A varredura de entradas sem resposta, de cinco em cinco minutos
+            # pelo beat. Parcial porque o que interessa e sempre a minoria:
+            # respondida_em preenchido e o caso normal e nao precisa entrar no
+            # indice.
+            models.Index(
+                fields=["direcao", "criado_em"],
+                condition=models.Q(respondida_em__isnull=True),
+                name="mensagem_sem_resposta",
+            ),
+        ]
         constraints = [
             # Garantia de nao duplicar no banco, e nao so no servico. Parcial
             # porque mensagem de saida nasce sem id da Meta, e varias string
