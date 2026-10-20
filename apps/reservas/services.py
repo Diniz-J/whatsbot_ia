@@ -10,6 +10,7 @@ que vier pelo WhatsApp — sao a mesma tabela de proposito.
 Nada aqui depende de Django alem do ORM.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
@@ -21,7 +22,9 @@ from django.utils import timezone
 
 from apps.catalogo import services as catalogo
 from apps.conversas.models import Contato
-from apps.reservas.models import DURACAO_PADRAO, STATUS_OCUPAM, Mesa, Reserva
+from apps.reservas.models import DURACAO_PADRAO, SOBREPOSICAO, STATUS_OCUPAM, Mesa, Reserva
+
+logger = logging.getLogger(__name__)
 
 # De quanto em quanto tempo os horarios sugeridos andam. Meia hora e o que o
 # cliente espera ouvir ("19h30, 20h"); passo menor viraria lista ilegivel.
@@ -270,13 +273,7 @@ def criar_reserva(
     if ja_tem is not None:
         return ja_tem, False
 
-    abertas = Reserva.objects.filter(
-        tenant_id=tenant_id,
-        contato_id=contato_id,
-        status__in=STATUS_OCUPAM,
-        inicio__gte=agora,
-    ).count()
-    if abertas >= MAX_RESERVAS_ABERTAS:
+    if _abertas(tenant_id, contato_id, agora).count() >= MAX_RESERVAS_ABERTAS:
         raise ReservaRecusada(Motivo.LIMITE)
 
     vagas = disponibilidade(tenant_id, inicio, pessoas, fim)
@@ -300,24 +297,52 @@ def criar_reserva(
         with transaction.atomic():
             reserva.full_clean()
             reserva.save()
-    except (IntegrityError, ValidationError) as erro:
-        # A mesa foi tomada entre a consulta e o INSERT. A restricao do banco
-        # e a validacao do modelo recusam a sobreposicao, cada uma do seu
-        # lado da corrida; as duas significam a mesma coisa para o cliente.
+    except IntegrityError as erro:
+        # A mesa foi tomada entre a consulta e o INSERT, e a restricao do
+        # banco pegou: e o lado da corrida que a checagem em Python nao
+        # alcanca, porque dois workers passam por ela ao mesmo tempo.
+        raise ReservaRecusada(Motivo.CORRIDA) from erro
+    except ValidationError as erro:
+        # O outro lado da mesma corrida, visto pelo `clean`. Discriminado pelo
+        # codigo e nao traduzido em bloco: o `clean` recusa por varias regras
+        # (capacidade, escopo de cliente, fim antes do inicio), e dizer ao
+        # cliente que a mesa acabou de ser tomada quando o defeito foi outro
+        # esconde o defeito e manda ele tentar outro horario em vao.
+        if not _e_sobreposicao(erro):
+            logger.error("Reserva recusada na validacao por outro motivo: %s", erro.message_dict)
+            raise
         raise ReservaRecusada(Motivo.CORRIDA) from erro
     return reserva, True
 
 
+def _e_sobreposicao(erro: ValidationError) -> bool:
+    """Se a validacao recusou por horario ja ocupado, e nao por outra regra."""
+    return any(
+        detalhe.code == SOBREPOSICAO
+        for detalhes in getattr(erro, "error_dict", {}).values()
+        for detalhe in detalhes
+    )
+
+
+def _abertas(tenant_id: int, contato_id: int, agora: datetime):
+    """Reservas futuras do contato que ainda seguram mesa.
+
+    Um dono so para a definicao de "reserva aberta": o teto do fechamento e a
+    listagem leem o mesmo filtro. Duas copias divergiriam no primeiro ajuste —
+    e o teto deixaria de contar o que a listagem mostra.
+    """
+    return Reserva.objects.filter(
+        tenant_id=tenant_id,
+        contato_id=contato_id,
+        status__in=STATUS_OCUPAM,
+        inicio__gte=agora,
+    )
+
+
 def reservas_abertas(tenant_id: int, contato_id: int, agora: datetime | None = None):
     """Reservas futuras do contato que ainda seguram mesa, da proxima em diante."""
-    agora = agora or timezone.now()
     return list(
-        Reserva.objects.filter(
-            tenant_id=tenant_id,
-            contato_id=contato_id,
-            status__in=STATUS_OCUPAM,
-            inicio__gte=agora,
-        )
+        _abertas(tenant_id, contato_id, agora or timezone.now())
         .select_related("mesa")
         .order_by("inicio")
     )
