@@ -56,8 +56,12 @@ def responder_inbound(mensagem_id: int) -> int | None:
     retry_jitter=True,
     max_retries=5,
 )
-def enviar_outbound(self, mensagem_id: int, idioma: str = "", variaveis=None) -> str | None:
+def enviar_outbound(self, mensagem_id: int) -> str | None:
     """Entrega uma mensagem ja gravada ao canal e devolve o id da Meta.
+
+    Recebe so o id: idioma e variaveis do template saem da propria linha, e nao
+    de argumento da tarefa. E o que deixa qualquer um reenfileirar um envio
+    preso tendo so o id em maos — a varredura inclusive.
 
     Retenta so `ErroTransitorio`: repetir um numero invalido ou um template
     reprovado queima cota e nunca passa, e nao repetir um 503 perde a
@@ -70,7 +74,7 @@ def enviar_outbound(self, mensagem_id: int, idioma: str = "", variaveis=None) ->
     try:
         # Fora de transacao de proposito: a chamada de rede nao pode segurar
         # lock de linha, e o claim acima ja garantiu exclusividade.
-        id_externo = _entregar(mensagem, idioma, variaveis or [])
+        id_externo = _entregar(mensagem)
     except ErroTransitorio:
         # Volta para a fila de verdade: o status destravado deixa a proxima
         # tentativa reservar de novo.
@@ -111,13 +115,18 @@ def _reservar(mensagem_id: int) -> Mensagem | None:
         return mensagem
 
 
-def _entregar(mensagem: Mensagem, idioma: str, variaveis: list[str]) -> str:
+def _entregar(mensagem: Mensagem) -> str:
     configuracao = _configuracao(mensagem)
     canal = canal_para(configuracao)
     telefone = mensagem.conversa.contato.telefone
 
     if mensagem.template:
-        return canal.enviar_template(telefone, mensagem.template, idioma or "pt_BR", variaveis)
+        return canal.enviar_template(
+            telefone,
+            mensagem.template,
+            mensagem.idioma or "pt_BR",
+            list(mensagem.variaveis or []),
+        )
     return canal.enviar_texto(telefone, mensagem.texto)
 
 
@@ -209,24 +218,22 @@ def _reenfileirar_saidas(agora) -> int:
     - o `enviar_outbound` esgotou as retentativas de `ErroTransitorio`, que
       devolvem o status para `enfileirada` antes de relancar.
 
-    Teto de idade na janela de servico, pelo mesmo motivo do
-    `_reatender_entradas`: passada ela a Meta recusa texto livre, entao
-    insistir nao entrega nada.
-
-    Template fica de fora: o idioma e as variaveis vao como argumento da
-    tarefa e nao estao gravados na mensagem, entao reenfileirar um mandaria
-    template sem os dados que ele preenche. Enquanto nao estiverem na linha,
-    recuperar template as cegas e pior que deixar aparecer como pendente.
+    Teto de idade na janela de servico **para texto livre**, pelo mesmo motivo
+    do `_reatender_entradas`: passada ela a Meta recusa texto fora da janela,
+    entao insistir nao entrega nada. Template nao tem teto, porque ele e
+    justamente o caminho valido fora dela — e o idioma e as variaveis dele
+    estao na propria linha, entao reenfileirar pelo id manda o template
+    completo.
     """
     limite = agora - timedelta(minutes=settings.ENVIO_TRAVADO_MINUTOS)
     paradas = list(
         Mensagem.objects.filter(
             direcao=Mensagem.Direcao.SAIDA,
             status=Mensagem.Status.ENFILEIRADA,
-            template="",
             atualizado_em__lt=limite,
-            criado_em__gte=agora - JANELA_SERVICO,
-        ).values_list("pk", flat=True)
+        )
+        .exclude(template="", criado_em__lt=agora - JANELA_SERVICO)
+        .values_list("pk", flat=True)
     )
     for mensagem_id in paradas:
         enviar_outbound.delay(mensagem_id)

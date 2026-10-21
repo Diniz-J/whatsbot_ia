@@ -66,18 +66,16 @@ def _agendar(conversa: Conversa, texto: str, tipo: str, **extra) -> Mensagem:
         tipo=tipo,
         texto=texto,
         template=extra.get("template", ""),
+        # Na linha, e nao no argumento da tarefa: a tarefa recebe so o id, e e
+        # da linha que a varredura reconstroi um envio que ficou preso.
+        idioma=extra.get("idioma", ""),
+        variaveis=extra.get("variaveis", []),
         # Guardado na propria mensagem, igual a categoria de cobranca: o
         # faturamento soma as duas fontes de custo numa consulta.
         tokens_entrada=getattr(uso, "entrada", None),
         tokens_saida=getattr(uso, "saida", None),
     )
-    transaction.on_commit(
-        lambda: enviar_outbound.delay(
-            mensagem.pk,
-            idioma=extra.get("idioma", ""),
-            variaveis=extra.get("variaveis", []),
-        )
-    )
+    transaction.on_commit(lambda: enviar_outbound.delay(mensagem.pk))
     return mensagem
 
 

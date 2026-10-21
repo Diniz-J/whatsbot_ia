@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from apps.canal.fake import CanalFake
 from apps.conversas.models import JANELA_SERVICO, Contato, Conversa, EventoWebhook, Mensagem
-from apps.core import pipeline, tasks
+from apps.core import envio, pipeline, tasks
 from tests.payloads_whatsapp import payload_mensagem
 
 
@@ -145,21 +145,45 @@ def test_saida_fora_da_janela_nao_e_mais_reenfileirada(restaurante, conversa, ca
     assert canal.enviadas == []
 
 
-def test_template_parado_nao_e_reenfileirado_as_cegas(restaurante, conversa, canal, settings):
-    """Idioma e variaveis vao como argumento da tarefa, nao na linha.
+def test_template_parado_volta_com_idioma_e_variaveis(restaurante, conversa, canal, settings):
+    """Reenfileirar pelo id tem que mandar o template completo.
 
-    Reenfileirar pelo id mandaria o template sem os dados que ele preenche.
-    Enquanto nao estiverem gravados, aparecer como pendente e melhor.
+    Idioma e variaveis ficam na linha justamente para isto: como argumento da
+    tarefa, a varredura so teria o id e mandaria o template sem os dados que
+    ele preenche — pior que deixar aparecer como pendente.
     """
-    saida_parada(
-        restaurante,
-        conversa,
-        template="confirmacao_reserva",
-        idade_em_minutos=settings.ENVIO_TRAVADO_MINUTOS + 1,
+    mensagem = envio.agendar_template(conversa, "confirmacao_reserva", variaveis=["20h"])
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        atualizado_em=timezone.now() - timedelta(minutes=settings.ENVIO_TRAVADO_MINUTOS + 1)
     )
 
-    assert tasks.varrer_pendentes()["saidas_paradas"] == 0
-    assert canal.enviadas == []
+    assert tasks.varrer_pendentes()["saidas_paradas"] == 1
+
+    assert canal.enviadas == [
+        {
+            "tipo": "template",
+            "telefone": "5511999999999",
+            "template": "confirmacao_reserva",
+            "idioma": "pt_BR",
+            "variaveis": ["20h"],
+        }
+    ]
+
+
+def test_template_fora_da_janela_continua_sendo_recuperado(restaurante, conversa, canal, settings):
+    """O teto de 24h e do texto livre, nao do template.
+
+    Template e justamente o caminho valido fora da janela, entao descarta-lo
+    pela idade seria descartar o unico envio que ainda podia sair.
+    """
+    mensagem = envio.agendar_template(conversa, "confirmacao_reserva", variaveis=["20h"])
+    Mensagem.objects.filter(pk=mensagem.pk).update(
+        atualizado_em=timezone.now() - timedelta(minutes=settings.ENVIO_TRAVADO_MINUTOS + 1),
+        criado_em=timezone.now() - JANELA_SERVICO - timedelta(hours=1),
+    )
+
+    assert tasks.varrer_pendentes()["saidas_paradas"] == 1
+    assert len(canal.enviadas) == 1
 
 
 def test_entrega_nao_processada_e_reprocessada(restaurante, canal, settings):
