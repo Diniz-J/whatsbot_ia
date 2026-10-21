@@ -308,3 +308,50 @@ cada requisicao. Cache e casamento de prefixo, e `system` vem antes de
 `cache_control` em lugar nenhum, entao isso nao custa nada; no dia em que
 alguem ligar cache, a data tem de sair do `system` e ir para o turno do
 cliente, senao o cache nunca acerta.
+
+## 11. Duracao de transacao e recuperacao do envio
+
+Decidido em out/2026, na revisao do repo. As duas decisoes abaixo saem do mesmo
+lugar: a fila entrega mais de uma vez e o processo morre no meio, entao o que
+importa nao e o caminho feliz, e qual estado fica gravado quando ele e
+interrompido.
+
+**Nenhuma chamada de rede dentro de transacao.** O atendimento acontece entre
+duas transacoes curtas, nao dentro de uma. Redigir leva dezenas de segundos no
+tier de IA (`LLM_TIMEOUT` por volta de ferramenta), e segurar lock de linha e
+transacao aberta por esse tempo custa conexao do banco, retencao de snapshot e
+atraso de vacuum. O `enviar_outbound` ja seguia essa regra; o pipeline fazia o
+oposto.
+
+- **A unicidade vem do carimbo, nao da reserva.** `respondida_em` e lido com
+  lock **depois** de redigir: quem encontra o campo preenchido descarta o
+  proprio texto em vez de mandar. Duas execucoes simultaneas podem redigir
+  duas vezes e, no tier de IA, pagar duas vezes — mas uma so responde. Trocar
+  "nao pagar duas vezes" por "nao segurar lock" e deliberado: token duplicado
+  e centavo, resposta duplicada o cliente ve, e num template seria cobrada.
+- **Excecao ao redigir continua deixando a entrada para a varredura.** Antes
+  isso vinha do rollback da transacao unica; agora vem de o carimbo nunca ter
+  acontecido. O teto da janela de servico (secao 7 da varredura) segue sendo o
+  que impede a insistencia eterna.
+- **A escrita da ferramenta nao e mais atomica com a resposta.** Reserva
+  fechada e confirmacao agendada commitam separado, entao uma queda entre as
+  duas deixa reserva sem confirmacao — o mesmo caso que a secao 9 ja
+  documenta para a janela fechada. O reatendimento e seguro porque
+  `criar_reserva` e idempotente por contato e sobreposicao: a segunda volta
+  devolve a reserva que ja existe em vez de criar outra.
+
+**Toda mensagem de saida se basta na propria linha.** Idioma e variaveis do
+template ficam gravados nela, e a tarefa de envio recebe so o id. Como
+argumento de tarefa, quem tivesse apenas o id — a varredura — mandaria o
+template sem os dados que ele preenche. E por isso que a recuperacao de envio
+preso cobre template tambem, e que o teto de 24h vale so para texto livre:
+template e o unico caminho valido fora da janela, entao descarta-lo pela idade
+seria descartar o unico envio que ainda podia sair.
+
+**O que a varredura cobre, e por que sao quatro casos e nao dois.** Envio
+reservado (`enviando`) cujo worker morreu; saida gravada (`enfileirada`) que
+nunca foi reclamada, porque o `delay` nao chegou ao broker, o worker morreu
+antes do claim ou as retentativas se esgotaram; entrega gravada que nunca foi
+processada; e entrada gravada que nunca foi atendida. Os quatro sao perda
+silenciosa, e cada um tem um estado proprio no banco — e so por isso da para
+recuperar sem adivinhar.
