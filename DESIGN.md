@@ -190,6 +190,15 @@ separacao e vazamento.
 - Backup e por banco, com restore testado por cliente.
 - Rota do admin configuravel no `urls.py` (nao deixar no `/admin/` padrao);
   proteger com 2FA, rate limit e, se possivel, allowlist de IP.
+- **`manage.py check --deploy` e passo de subida**, nao enfeite. As duas
+  credenciais do webhook nascem vazias e falham fechado: sem elas o sistema
+  sobe, atende o admin, e recusa toda entrega da Meta com 403 e uma linha de
+  WARNING, ate a Meta desativar a subscription por acumulo de erro. Falhar
+  fechado e certo; o que faltava era alguem dizer o porque. Fica como checagem
+  de deploy (`canal.E001`/`E002`) e nao comum porque em dev e na suite as duas
+  estao vazias de proposito. O hardening de HTTPS/HSTS/cookie nao tem checagem
+  nossa: o Django ja cobre em `security.W004`/`W008`/`W012`/`W016`, no mesmo
+  `--deploy` — ali o que faltava nao era a checagem, era rodar.
 
 **O que ainda nao existe:** template de stack por cliente, provisionamento,
 migrate e rotacao de secret automatizados. Sem isso, B nao chega no terceiro
