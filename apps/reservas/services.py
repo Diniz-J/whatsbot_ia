@@ -46,6 +46,8 @@ class Motivo(StrEnum):
     SEM_MESA = "sem_mesa"
     LIMITE = "limite"
     CORRIDA = "corrida"
+    SEM_RESERVA = "sem_reserva"
+    OUTRA_RESERVA = "outra_reserva"
 
 
 class ReservaRecusada(Exception):
@@ -77,7 +79,11 @@ class Disponibilidade:
 
 
 def disponibilidade(
-    tenant_id: int, inicio: datetime, pessoas: int, fim: datetime | None = None
+    tenant_id: int,
+    inicio: datetime,
+    pessoas: int,
+    fim: datetime | None = None,
+    ignorando: int | None = None,
 ) -> Disponibilidade:
     """Mesas que cabem o grupo e estao livres no intervalo `[inicio, fim)`.
 
@@ -88,10 +94,15 @@ def disponibilidade(
     Checa o instante de inicio, nao o intervalo inteiro: se a reserva avanca
     depois de fechar, quem decide e a casa, e nao ha politica cadastrada para
     isso.
+
+    `ignorando` tira uma reserva da conta de ocupacao. Existe para remarcar:
+    mover a reserva das 20h para 20h30 na mesma mesa esbarraria nela mesma, e
+    a resposta seria "sem mesa" por causa da propria reserva que se quer
+    mover.
     """
     fim = fim or inicio + DURACAO_PADRAO
     aberto = catalogo.esta_aberto(tenant_id, inicio)
-    mesas = _mesas_livres(tenant_id, inicio, fim, pessoas) if aberto else []
+    mesas = _mesas_livres(tenant_id, inicio, fim, pessoas, ignorando) if aberto else []
     return Disponibilidade(inicio=inicio, fim=fim, pessoas=pessoas, aberto=aberto, mesas=mesas)
 
 
@@ -141,13 +152,21 @@ def horarios_livres(
     return sorted(livres)
 
 
-def _mesas_livres(tenant_id: int, inicio: datetime, fim: datetime, pessoas: int) -> list[Mesa]:
+def _mesas_livres(
+    tenant_id: int,
+    inicio: datetime,
+    fim: datetime,
+    pessoas: int,
+    ignorando: int | None = None,
+) -> list[Mesa]:
     conflitantes = Reserva.objects.filter(
         mesa=OuterRef("pk"),
         status__in=STATUS_OCUPAM,
         inicio__lt=fim,
         fim__gt=inicio,
     )
+    if ignorando is not None:
+        conflitantes = conflitantes.exclude(pk=ignorando)
     return list(
         Mesa.objects.filter(tenant_id=tenant_id, ativa=True, capacidade__gte=pessoas)
         .annotate(ocupada=Exists(conflitantes))
@@ -321,3 +340,103 @@ def reservas_abertas(tenant_id: int, contato_id: int, agora: datetime | None = N
         .select_related("mesa")
         .order_by("inicio")
     )
+
+
+def cancelar_reserva(tenant_id: int, contato_id: int, agora: datetime | None = None) -> Reserva:
+    """Cancela a PROXIMA reserva do contato e devolve qual foi.
+
+    Sempre a proxima, nunca escolhida por numero ou por descricao: o cliente
+    diz "quero cancelar" e o modelo nao pode decidir entre duas reservas por
+    conta propria. Quem tem mais de uma e quer cancelar a outra fala com a
+    equipe — errar aqui apaga mesa de quem ia aparecer.
+
+    Cancelada e nao apagada: o historico fica para a equipe ver, e o status
+    libera o horario porque `STATUS_OCUPAM` nao o inclui.
+    """
+    proximas = reservas_abertas(tenant_id, contato_id, agora)
+    if not proximas:
+        raise ReservaRecusada(Motivo.SEM_RESERVA)
+
+    reserva = proximas[0]
+    reserva.status = Reserva.Status.CANCELADA
+    reserva.save(update_fields=["status", "atualizado_em"])
+    return reserva
+
+
+def remarcar_reserva(
+    tenant_id: int,
+    contato_id: int,
+    novo_inicio: datetime,
+    pessoas: int | None = None,
+    agora: datetime | None = None,
+) -> Reserva:
+    """Move a PROXIMA reserva do contato para outro horario. Mesma linha.
+
+    Move em vez de cancelar e criar de novo por dois motivos. O primeiro e
+    pratico: `criar_reserva` devolve a reserva que ja existe quando o intervalo
+    se sobrepoe, entao remarcar das 20h para as 21h receberia de volta a
+    propria reserva das 20h em vez de uma nova — conferido antes de escrever
+    isto. O segundo e de significado: remarcar e uma reserva que mudou de
+    hora, nao duas reservas.
+
+    A mesa atual e mantida quando continua livre no horario novo; mudar de
+    mesa sem precisar e so confusao para a equipe.
+
+    `pessoas` muda junto quando vem, porque o cliente que remarca costuma
+    dizer que o grupo mudou de tamanho no mesmo pedido.
+    """
+    agora = agora or timezone.now()
+    if novo_inicio <= agora:
+        raise ReservaRecusada(Motivo.PASSADO)
+
+    proximas = reservas_abertas(tenant_id, contato_id, agora)
+    if not proximas:
+        raise ReservaRecusada(Motivo.SEM_RESERVA)
+
+    reserva = proximas[0]
+    quantas = pessoas if pessoas is not None else reserva.pessoas
+    if quantas < 1:
+        raise ValueError(f"Numero de pessoas invalido: {quantas}")
+
+    novo_fim = novo_inicio + DURACAO_PADRAO
+    # Sobreposicao com outra reserva do proprio contato. A restricao do banco e
+    # por mesa, entao ela nao pega: a movida iria para uma mesa e a outra
+    # reserva ficaria na outra, com uma pessoa segurando duas mesas na mesma
+    # hora — o gasto duplo que o `ja_tem` do `criar_reserva` impede. E
+    # `disponibilidade` nao cobre isto: `ignorando` tira da conta justamente a
+    # reserva que esta sendo movida, nao as outras do contato.
+    #
+    # Recusa em vez de escolher qual das duas vale: e a mesma razao de o
+    # cancelamento so mexer na proxima, e quem tem duas resolve com a equipe.
+    conflito = (
+        Reserva.objects.filter(
+            tenant_id=tenant_id,
+            contato_id=contato_id,
+            status__in=STATUS_OCUPAM,
+            inicio__lt=novo_fim,
+            fim__gt=novo_inicio,
+        )
+        .exclude(pk=reserva.pk)
+        .exists()
+    )
+    if conflito:
+        raise ReservaRecusada(Motivo.OUTRA_RESERVA)
+
+    vagas = disponibilidade(tenant_id, novo_inicio, quantas, novo_fim, ignorando=reserva.pk)
+    if not vagas.aberto:
+        raise ReservaRecusada(Motivo.FECHADO)
+    if not vagas.mesas:
+        raise ReservaRecusada(Motivo.SEM_MESA)
+
+    atuais = [m for m in vagas.mesas if m.pk == reserva.mesa_id]
+    reserva.mesa = atuais[0] if atuais else vagas.mesas[0]
+    reserva.inicio = novo_inicio
+    reserva.fim = novo_fim
+    reserva.pessoas = quantas
+    try:
+        with transaction.atomic():
+            reserva.full_clean()
+            reserva.save(update_fields=["mesa", "inicio", "fim", "pessoas", "atualizado_em"])
+    except (IntegrityError, ValidationError) as erro:
+        raise ReservaRecusada(Motivo.CORRIDA) from erro
+    return reserva

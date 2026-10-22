@@ -179,3 +179,55 @@ def test_reprocessar_a_mesma_entrada_nao_reserva_duas_vezes(conversa, monkeypatc
 
     assert segunda is None
     assert Reserva.objects.count() == 1
+
+
+def modelo_que_chama(monkeypatch, nome, argumentos, resposta):
+    construir = AnthropicFalso.com(
+        [
+            RespostaFalsa([BlocoFerramenta(nome, argumentos)], stop_reason="tool_use"),
+            RespostaFalsa([BlocoTexto(resposta)]),
+        ]
+    )
+    monkeypatch.setattr(modulo_cliente.anthropic, "Anthropic", construir)
+    return construir
+
+
+def test_cancelamento_ponta_a_ponta(conversa, monkeypatch):
+    monkeypatch.setattr(tasks, "canal_para", lambda configuracao: CanalFake())
+    modelo_que_fecha(monkeypatch)
+    responder_mensagem(pedir(conversa).pk)
+
+    construir = modelo_que_chama(
+        monkeypatch, "cancelar_reserva", {}, "Cancelado. Qualquer coisa e so chamar."
+    )
+    saida = responder_mensagem(pedir(conversa, "pode cancelar minha reserva").pk)
+
+    assert Reserva.objects.get().status == Reserva.Status.CANCELADA
+    assert saida.tipo == "text"
+    assert saida.template == ""
+    assert "Cancelado" in saida.texto
+    resultado = construir.mensagens.chamadas[1]["messages"][-1]["content"][0]["content"]
+    assert "RESERVA CANCELADA" in resultado
+
+
+def test_remarcacao_ponta_a_ponta(conversa, monkeypatch):
+    monkeypatch.setattr(tasks, "canal_para", lambda configuracao: CanalFake())
+    modelo_que_fecha(monkeypatch)
+    responder_mensagem(pedir(conversa).pk)
+    original = Reserva.objects.get()
+
+    construir = modelo_que_chama(
+        monkeypatch,
+        "remarcar_reserva",
+        {"nova_data_hora": f"{SABADO}T21:30"},
+        "Remarcado para 21h30.",
+    )
+    saida = responder_mensagem(pedir(conversa, "da pra mudar para 21h30?").pk)
+
+    movida = Reserva.objects.get()
+    assert movida.pk == original.pk
+    assert timezone.localtime(movida.inicio).strftime("%H:%M") == "21:30"
+    assert movida.status == Reserva.Status.CONFIRMADA
+    assert saida.template == ""
+    resultado = construir.mensagens.chamadas[1]["messages"][-1]["content"][0]["content"]
+    assert "RESERVA REMARCADA" in resultado

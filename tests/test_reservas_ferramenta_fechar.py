@@ -76,6 +76,20 @@ def test_segunda_chamada_avisa_que_ja_estava_fechada(restaurante, contato, casa_
     assert Reserva.objects.count() == 1
 
 
+def test_a_hora_dita_ao_cliente_esta_no_fuso_do_negocio(restaurante, contato, casa_aberta):
+    """O banco guarda em UTC, e reserva lida de volta chega adiantada.
+
+    O caminho idempotente le do banco, entao dizia "as 23:00" para quem
+    reservou as 20:00. A hora errada chegava ao cliente, nao ao log.
+    """
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    nova = fechar(restaurante, contato.pk)
+    do_banco = fechar(restaurante, contato.pk)
+
+    assert "as 20:00" in nova
+    assert "as 20:00" in do_banco
+
+
 def test_sem_contato_no_contexto_nao_afirma_que_fechou(restaurante, casa_aberta):
     """Caminho que nao existe no atendimento normal; se acontecer, o modelo
     tem que oferecer uma pessoa em vez de dizer que fechou."""
@@ -161,3 +175,84 @@ def test_todo_motivo_de_recusa_tem_texto(restaurante):
 
     for motivo in services.Motivo:
         assert motivo in ferramentas.RECUSA
+
+
+def cancelar(tenant, contato_id):
+    return ferramentas.executar("cancelar_reserva", {}, tenant.pk, contato_id=contato_id)
+
+
+def remarcar(tenant, contato_id, hora="21:30", **extras):
+    argumentos = {"nova_data_hora": f"{SABADO}T{hora}", **extras}
+    return ferramentas.executar("remarcar_reserva", argumentos, tenant.pk, contato_id=contato_id)
+
+
+def test_cancelamento_diz_qual_reserva_foi(restaurante, contato, casa_aberta):
+    """Quem tem duas reservas ouviria "cancelado" e nao saberia qual."""
+    fechar(restaurante, contato.pk)
+
+    saida = cancelar(restaurante, contato.pk)
+
+    assert "RESERVA CANCELADA" in saida
+    assert f"{SABADO:%d/%m} as 20:00" in saida
+    assert Reserva.objects.get().status == Reserva.Status.CANCELADA
+
+
+def test_cancelar_sem_reserva_nao_diz_que_cancelou(restaurante, contato, casa_aberta):
+    saida = cancelar(restaurante, contato.pk)
+
+    assert "NAO CANCELADA" in saida
+    assert "nao tem reserva futura" in saida
+
+
+def test_remarcacao_diz_a_hora_nova(restaurante, contato, casa_aberta):
+    fechar(restaurante, contato.pk)
+
+    saida = remarcar(restaurante, contato.pk)
+
+    assert "RESERVA REMARCADA" in saida
+    assert f"{SABADO:%d/%m} as 21:30" in saida
+    assert Reserva.objects.count() == 1
+
+
+def test_remarcar_pode_mudar_o_grupo(restaurante, contato, casa_aberta):
+    fechar(restaurante, contato.pk, pessoas=2)
+
+    saida = remarcar(restaurante, contato.pk, pessoas=4)
+
+    assert "4 pessoas" in saida
+
+
+def test_recusa_de_remarcar_nao_diz_nao_fechada(restaurante, contato, casa_aberta):
+    """O verbo errado faria o modelo dizer a coisa errada ao cliente."""
+    fechar(restaurante, contato.pk)
+
+    saida = remarcar(restaurante, contato.pk, hora="15:00")
+
+    assert "NAO REMARCADA" in saida
+    assert "NAO FECHADA" not in saida
+    assert "nao ha atendimento" in saida
+
+
+def test_sem_contato_nao_cancela_nem_remarca(restaurante, contato, casa_aberta):
+    fechar(restaurante, contato.pk)
+
+    sem_cancelar = cancelar(restaurante, None)
+    sem_remarcar = remarcar(restaurante, None)
+
+    assert "NAO CANCELADA" in sem_cancelar
+    assert "NAO REMARCADA" in sem_remarcar
+    assert Reserva.objects.get().status == Reserva.Status.CONFIRMADA
+
+
+def test_data_invalida_na_remarcacao_volta_como_resultado(restaurante, contato, casa_aberta):
+    fechar(restaurante, contato.pk)
+
+    saida = ferramentas.executar(
+        "remarcar_reserva",
+        {"nova_data_hora": "sabado que vem"},
+        restaurante.pk,
+        contato_id=contato.pk,
+    )
+
+    assert "invalidas" in saida
+    assert Reserva.objects.get().inicio is not None
