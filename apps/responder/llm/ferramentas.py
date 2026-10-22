@@ -56,6 +56,10 @@ RECUSA = {
         "este contato ja tem o maximo de reservas futuras. A equipe precisa resolver."
     ),
     reservas.Motivo.SEM_RESERVA: "este contato nao tem reserva futura.",
+    reservas.Motivo.OUTRA_RESERVA: (
+        "este contato ja tem outra reserva nesse horario, e mover deixaria duas "
+        "ao mesmo tempo. Ofereca outro horario."
+    ),
     reservas.Motivo.CORRIDA: (
         "a mesa foi reservada por outra pessoa agora mesmo. Ofereca outro horario."
     ),

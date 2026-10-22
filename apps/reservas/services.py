@@ -47,6 +47,7 @@ class Motivo(StrEnum):
     LIMITE = "limite"
     CORRIDA = "corrida"
     SEM_RESERVA = "sem_reserva"
+    OUTRA_RESERVA = "outra_reserva"
 
 
 class ReservaRecusada(Exception):
@@ -398,6 +399,29 @@ def remarcar_reserva(
         raise ValueError(f"Numero de pessoas invalido: {quantas}")
 
     novo_fim = novo_inicio + DURACAO_PADRAO
+    # Sobreposicao com outra reserva do proprio contato. A restricao do banco e
+    # por mesa, entao ela nao pega: a movida iria para uma mesa e a outra
+    # reserva ficaria na outra, com uma pessoa segurando duas mesas na mesma
+    # hora — o gasto duplo que o `ja_tem` do `criar_reserva` impede. E
+    # `disponibilidade` nao cobre isto: `ignorando` tira da conta justamente a
+    # reserva que esta sendo movida, nao as outras do contato.
+    #
+    # Recusa em vez de escolher qual das duas vale: e a mesma razao de o
+    # cancelamento so mexer na proxima, e quem tem duas resolve com a equipe.
+    conflito = (
+        Reserva.objects.filter(
+            tenant_id=tenant_id,
+            contato_id=contato_id,
+            status__in=STATUS_OCUPAM,
+            inicio__lt=novo_fim,
+            fim__gt=novo_inicio,
+        )
+        .exclude(pk=reserva.pk)
+        .exists()
+    )
+    if conflito:
+        raise ReservaRecusada(Motivo.OUTRA_RESERVA)
+
     vagas = disponibilidade(tenant_id, novo_inicio, quantas, novo_fim, ignorando=reserva.pk)
     if not vagas.aberto:
         raise ReservaRecusada(Motivo.FECHADO)

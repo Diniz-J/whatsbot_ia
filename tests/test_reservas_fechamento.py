@@ -366,3 +366,35 @@ def test_remarcar_a_proxima_nao_toca_na_seguinte(restaurante, contato, casa_aber
     assert movida.pk == cedo.pk
     tarde.refresh_from_db()
     assert tarde.inicio == as_horas(22)
+
+
+def test_remarcar_nao_sobrepoe_outra_reserva_do_mesmo_contato(restaurante, contato, casa_aberta):
+    """Remarcar para cima de outra reserva propria daria duas mesas na mesma hora.
+
+    A restricao do banco e por mesa, entao ela nao pega: a movida fica numa
+    mesa e a outra reserva na outra. E `disponibilidade` tira da conta de
+    ocupacao justamente a reserva que esta sendo movida, nao as demais do
+    contato. E o mesmo gasto duplo que o `ja_tem` do `criar_reserva` impede.
+    """
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+    outra, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(22), 2)
+
+    with pytest.raises(services.ReservaRecusada) as erro:
+        services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(20, 30))
+
+    assert erro.value.motivo == services.Motivo.OUTRA_RESERVA
+    outra.refresh_from_db()
+    assert outra.inicio == as_horas(22)
+
+
+def test_remarcar_encostando_na_outra_reserva_passa(restaurante, contato, casa_aberta):
+    """O limite e sobreposicao, nao vizinhanca: 20h termina quando 22h comeca."""
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(22), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(20))
+
+    assert movida.inicio == as_horas(20)
+    assert movida.fim == as_horas(22)

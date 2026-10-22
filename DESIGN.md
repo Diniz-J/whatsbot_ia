@@ -270,6 +270,14 @@ isolada, nao coleta dia nem numero de pessoas; quem fecha e o hibrido.
   — com uma mesa so, nada seria remarcavel.
 - **A mesa atual e mantida quando continua livre**; trocar sem precisar e
   confusao para a equipe.
+- **Remarcar nao pode cair em cima de outra reserva do proprio contato.** A
+  restricao do banco e por mesa, entao ela nao pega: a movida iria para uma
+  mesa e a outra reserva ficaria na outra, com uma pessoa segurando duas mesas
+  na mesma hora. O `ignorando` do item acima tambem nao cobre — ele tira da
+  conta justamente a reserva que esta sendo movida, nao as outras. E recusa
+  (`OUTRA_RESERVA`) em vez de escolher qual das duas vale, pela mesma razao do
+  primeiro item desta lista. Achado em sonda depois da fatia ter sido escrita:
+  o `criar_reserva` tinha a guarda e o `remarcar_reserva` nao.
 - **O prompt exige confirmacao antes de cancelar**, porque cancelar nao se
   desfaz, e proibe afirmar antes de a ferramenta confirmar — a mesma regra do
   fechamento.
