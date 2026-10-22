@@ -7,11 +7,16 @@ e o `Responder` nao precisa saber — ele pede, e aqui recusa ou agenda.
 
 import logging
 
+from django.conf import settings
 from django.db import transaction
 
 from apps.conversas.models import Conversa, Mensagem
 
 logger = logging.getLogger(__name__)
+
+# Marca que fica no fim do texto cortado, para quem le a conversa no admin ver
+# que faltou pedaco em vez de achar que o bot parou no meio da frase.
+MARCA_DE_CORTE = "..."
 
 
 class JanelaFechada(Exception):
@@ -31,7 +36,34 @@ def agendar_texto(conversa: Conversa, texto: str, uso=None) -> Mensagem:
     """
     if not conversa.janela_aberta():
         raise JanelaFechada(f"conversa {conversa.pk} esta fora da janela de 24h: use template")
-    return _agendar(conversa, texto=texto, tipo="text", uso=uso)
+    return _agendar(conversa, texto=_caber_no_canal(texto), tipo="text", uso=uso)
+
+
+def _caber_no_canal(texto: str) -> str:
+    """Corta o texto no tamanho que a Cloud API aceita.
+
+    Acima do limite a Meta recusa, e a recusa chega como erro permanente: a
+    mensagem fica `falhou` e o cliente nao recebe nada. Frase cortada e pior
+    que frase inteira, e muito melhor que silencio.
+
+    Ha tensao consciente com a decisao de recusar resposta truncada pelo
+    modelo (`stop_reason` de max_tokens): la o que nao da para confiar e um
+    pedido de ferramenta cortado no meio, e existe o tier de regra para
+    assumir a resposta. Aqui o texto final ja esta pronto e a alternativa e
+    nao entregar nada.
+
+    E guarda de ultimo recurso. `LLM_MAX_TOKENS` e dimensionado para a
+    resposta caber no canal, entao chegar neste corte quer dizer que o modelo
+    fugiu do prompt, que pede duas ou tres frases — por isso o aviso no log.
+    """
+    limite = settings.WHATSAPP_TEXTO_MAX
+    if len(texto) <= limite:
+        return texto
+
+    logger.warning("Texto de %s caracteres cortado em %s para caber no canal", len(texto), limite)
+    if limite <= len(MARCA_DE_CORTE):
+        return texto[:limite]
+    return texto[: limite - len(MARCA_DE_CORTE)] + MARCA_DE_CORTE
 
 
 def agendar_template(
