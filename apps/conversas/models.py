@@ -124,6 +124,12 @@ class Mensagem(BaseModelTenant):
     tipo = models.CharField("tipo", max_length=30, default="text")
     texto = models.TextField("texto", blank=True)
     template = models.CharField("template", max_length=120, blank=True)
+    # Idioma e variaveis do template ficam na linha, e nao so no argumento da
+    # tarefa: e o que permite reenviar um template que ficou preso na fila. Como
+    # argumento, a varredura so teria o id da mensagem e mandaria o template sem
+    # os dados que ele preenche.
+    idioma = models.CharField("idioma do template", max_length=10, blank=True)
+    variaveis = models.JSONField("variaveis do template", default=list, blank=True)
     erro = models.TextField("erro do envio", blank=True)
     status_em = models.DateTimeField(
         "status reportado em",
@@ -152,6 +158,21 @@ class Mensagem(BaseModelTenant):
         verbose_name = "mensagem"
         verbose_name_plural = "mensagens"
         ordering = ["criado_em"]
+        indexes = [
+            # O historico da conversa: roda em toda mensagem de entrada do
+            # tier de IA, buscando as ultimas falas de um fio so. Sem este
+            # indice e varredura da tabela que mais cresce no banco.
+            models.Index(fields=["conversa", "-criado_em"], name="mensagem_fio_recente"),
+            # A varredura de entradas sem resposta, de cinco em cinco minutos
+            # pelo beat. Parcial porque o que interessa e sempre a minoria:
+            # respondida_em preenchido e o caso normal e nao precisa entrar no
+            # indice.
+            models.Index(
+                fields=["direcao", "criado_em"],
+                condition=models.Q(respondida_em__isnull=True),
+                name="mensagem_sem_resposta",
+            ),
+        ]
         constraints = [
             # Garantia de nao duplicar no banco, e nao so no servico. Parcial
             # porque mensagem de saida nasce sem id da Meta, e varias string

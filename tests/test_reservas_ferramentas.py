@@ -65,7 +65,24 @@ def test_diz_que_ha_mesa_e_que_a_reserva_nao_esta_feita(restaurante_aberto):
 
     assert "HA MESA" in saida
     assert f"{SABADO:%d/%m} as 20:00" in saida
-    assert "nao esta feita" in saida
+    assert "NAO esta" in saida
+
+
+def test_disponibilidade_manda_fechar_pela_ferramenta(restaurante_aberto):
+    """Quem fecha e o bot, pela ferramenta — nao a equipe.
+
+    Resultado de ferramenta pesa mais no modelo que o prompt de sistema. Com a
+    frase antiga ("quem fecha e a equipe", de antes do `fechar_reserva`), ele
+    prometeria ligacao da equipe justo depois de confirmar que ha mesa.
+    """
+    saida = executar(
+        "verificar_disponibilidade",
+        {"data_hora": f"{SABADO}T20:00", "pessoas": 4},
+        restaurante_aberto,
+    )
+
+    assert "fechar_reserva" in saida
+    assert "equipe" not in saida
 
 
 def test_fechado_e_cheio_sao_textos_diferentes(restaurante_aberto):

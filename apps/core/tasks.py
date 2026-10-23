@@ -56,8 +56,12 @@ def responder_inbound(mensagem_id: int) -> int | None:
     retry_jitter=True,
     max_retries=5,
 )
-def enviar_outbound(self, mensagem_id: int, idioma: str = "", variaveis=None) -> str | None:
+def enviar_outbound(self, mensagem_id: int) -> str | None:
     """Entrega uma mensagem ja gravada ao canal e devolve o id da Meta.
+
+    Recebe so o id: idioma e variaveis do template saem da propria linha, e nao
+    de argumento da tarefa. E o que deixa qualquer um reenfileirar um envio
+    preso tendo so o id em maos — a varredura inclusive.
 
     Retenta so `ErroTransitorio`: repetir um numero invalido ou um template
     reprovado queima cota e nunca passa, e nao repetir um 503 perde a
@@ -70,7 +74,7 @@ def enviar_outbound(self, mensagem_id: int, idioma: str = "", variaveis=None) ->
     try:
         # Fora de transacao de proposito: a chamada de rede nao pode segurar
         # lock de linha, e o claim acima ja garantiu exclusividade.
-        id_externo = _entregar(mensagem, idioma, variaveis or [])
+        id_externo = _entregar(mensagem)
     except ErroTransitorio:
         # Volta para a fila de verdade: o status destravado deixa a proxima
         # tentativa reservar de novo.
@@ -111,13 +115,18 @@ def _reservar(mensagem_id: int) -> Mensagem | None:
         return mensagem
 
 
-def _entregar(mensagem: Mensagem, idioma: str, variaveis: list[str]) -> str:
+def _entregar(mensagem: Mensagem) -> str:
     configuracao = _configuracao(mensagem)
     canal = canal_para(configuracao)
     telefone = mensagem.conversa.contato.telefone
 
     if mensagem.template:
-        return canal.enviar_template(telefone, mensagem.template, idioma or "pt_BR", variaveis)
+        return canal.enviar_template(
+            telefone,
+            mensagem.template,
+            mensagem.idioma or "pt_BR",
+            list(mensagem.variaveis or []),
+        )
     return canal.enviar_texto(telefone, mensagem.texto)
 
 
@@ -136,10 +145,13 @@ def _configuracao(mensagem: Mensagem):
 def varrer_pendentes() -> dict[str, int]:
     """Recupera o que ficou preso num estado nao-final.
 
-    Tres coisas travam sem isto, e as tres sao perda silenciosa:
+    Quatro coisas travam sem isto, e as quatro sao perda silenciosa:
 
     - Mensagem reservada (`enviando`) cujo worker morreu antes da resposta.
       Ninguem mais a reclama, porque o claim justamente impede isso.
+    - Mensagem de saida que ficou `enfileirada` sem nunca ser reclamada,
+      quando o enfileiramento nao chegou ao broker ou as retentativas de
+      `ErroTransitorio` se esgotaram — ver `_reenfileirar_saidas`.
     - Entrega gravada que nunca foi processada, quando o enfileiramento se
       perdeu e a Meta nao reenviou.
     - Mensagem de entrada ja gravada que nunca foi atendida, quando o
@@ -157,17 +169,25 @@ def varrer_pendentes() -> dict[str, int]:
     """
     agora = timezone.now()
     reenfileiradas = _destravar_envios(agora)
+    paradas = _reenfileirar_saidas(agora)
     reprocessados = _reprocessar_entregas(agora)
     reatendidas = _reatender_entradas(agora)
 
-    if reenfileiradas or reprocessados or reatendidas:
+    if reenfileiradas or paradas or reprocessados or reatendidas:
         logger.warning(
-            "Varredura destravou %s envio(s), %s entrega(s) e %s resposta(s)",
+            "Varredura destravou %s envio(s), %s saida(s) parada(s), "
+            "%s entrega(s) e %s resposta(s)",
             reenfileiradas,
+            paradas,
             reprocessados,
             reatendidas,
         )
-    return {"envios": reenfileiradas, "entregas": reprocessados, "respostas": reatendidas}
+    return {
+        "envios": reenfileiradas,
+        "saidas_paradas": paradas,
+        "entregas": reprocessados,
+        "respostas": reatendidas,
+    }
 
 
 def _destravar_envios(agora) -> int:
@@ -184,6 +204,40 @@ def _destravar_envios(agora) -> int:
     for mensagem_id in travadas:
         enviar_outbound.delay(mensagem_id)
     return len(travadas)
+
+
+def _reenfileirar_saidas(agora) -> int:
+    """Reenfileira saida que ficou `enfileirada` sem nunca ser reclamada.
+
+    O `_destravar_envios` acima nao alcanca este caso: ele procura o que foi
+    reservado (`enviando`) e nunca terminou. Tres caminhos deixam a mensagem
+    gravada e parada antes disso, e nos tres a resposta simplesmente nunca sai:
+
+    - o `delay` do `on_commit` nao chegou ao broker (Redis fora do ar);
+    - o worker morreu entre receber a tarefa e reservar a mensagem;
+    - o `enviar_outbound` esgotou as retentativas de `ErroTransitorio`, que
+      devolvem o status para `enfileirada` antes de relancar.
+
+    Teto de idade na janela de servico **para texto livre**, pelo mesmo motivo
+    do `_reatender_entradas`: passada ela a Meta recusa texto fora da janela,
+    entao insistir nao entrega nada. Template nao tem teto, porque ele e
+    justamente o caminho valido fora dela — e o idioma e as variaveis dele
+    estao na propria linha, entao reenfileirar pelo id manda o template
+    completo.
+    """
+    limite = agora - timedelta(minutes=settings.ENVIO_TRAVADO_MINUTOS)
+    paradas = list(
+        Mensagem.objects.filter(
+            direcao=Mensagem.Direcao.SAIDA,
+            status=Mensagem.Status.ENFILEIRADA,
+            atualizado_em__lt=limite,
+        )
+        .exclude(template="", criado_em__lt=agora - JANELA_SERVICO)
+        .values_list("pk", flat=True)
+    )
+    for mensagem_id in paradas:
+        enviar_outbound.delay(mensagem_id)
+    return len(paradas)
 
 
 def _reprocessar_entregas(agora) -> int:

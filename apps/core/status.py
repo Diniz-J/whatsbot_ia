@@ -23,7 +23,8 @@ MAPA = {
 }
 
 # Progressao normal. Callback chega fora de ordem (`read` antes de
-# `delivered` acontece), entao o status so avanca nesta escala.
+# `delivered` acontece), entao o status so avanca nesta escala. `falhou` fica
+# fora dela de proposito: ele nao avanca, encerra — ver `_aplicar`.
 ORDEM = {
     Mensagem.Status.ENFILEIRADA: 0,
     Mensagem.Status.ENVIANDO: 1,
@@ -74,10 +75,21 @@ def _aplicar(mensagem: Mensagem, novo: str, reporte: StatusEntrega) -> bool:
             logger.warning(
                 "Falha reportada para mensagem %s ja em %s", mensagem.pk, mensagem.status
             )
-        else:
+        elif mensagem.status != novo or mensagem.erro != reporte.erro:
+            # Repeticao da mesma falha nao e mudanca: a Meta reenvia status, e
+            # regravar o identico inflaria a contagem de alteradas.
             mensagem.status = novo
             mensagem.erro = reporte.erro
             campos += ["status", "erro"]
+    elif mensagem.status == Mensagem.Status.FALHOU:
+        # `falhou` esta fora da escala de ORDEM de proposito: ele nao avanca,
+        # ele encerra. Sem esta guarda um callback fora de ordem (`sent`
+        # chegando depois de `failed`) ressuscitaria a mensagem como enviada,
+        # com o motivo da falha ainda gravado ao lado — e `enviada` conta como
+        # entregue ao cliente no historico da conversa.
+        logger.warning(
+            "Status %s reportado para mensagem %s que ja falhou; mantido", novo, mensagem.pk
+        )
     elif ORDEM.get(novo, -1) > ORDEM.get(mensagem.status, -1):
         mensagem.status = novo
         campos.append("status")

@@ -1,7 +1,7 @@
 """Normalizacao de um evento gravado em contato, conversa e mensagem."""
 
 from apps.conversas.models import Contato, EventoWebhook, Mensagem
-from apps.core.services import processar_evento
+from apps.core.services import LIMITE_NOME_PERFIL, processar_evento
 from tests.payloads_whatsapp import payload_mensagem
 
 
@@ -47,3 +47,45 @@ def test_nome_do_perfil_e_atualizado(restaurante):
 
     assert Contato.objects.count() == 1
     assert Contato.objects.get().nome_perfil == "Jose da Silva"
+
+
+def test_nome_do_perfil_longo_e_cortado_no_tamanho_da_coluna(restaurante):
+    """O nome e texto que a pessoa escreve: nao da para confiar no tamanho.
+
+    Sem o corte, um nome maior que a coluna viraria DataError no meio do
+    processamento, com o evento nunca marcado como processado e a varredura
+    retentando a mesma entrega para sempre.
+    """
+    evento = EventoWebhook.objects.create(
+        tenant=restaurante,
+        id_mensagem="wamid.AAA",
+        payload=payload_mensagem(nome="a" * 500),
+    )
+
+    processar_evento(evento)
+
+    assert len(Contato.objects.get().nome_perfil) == LIMITE_NOME_PERFIL
+
+
+def test_nome_do_perfil_longo_nao_atualiza_a_cada_entrega(restaurante):
+    """A comparacao tem que ser contra o nome ja cortado.
+
+    Contra o nome cru, o gravado nunca seria igual ao recebido e toda entrega
+    daquele contato faria um UPDATE a mais, de graca.
+    """
+
+    def processar(identificador):
+        processar_evento(
+            EventoWebhook.objects.create(
+                tenant=restaurante,
+                id_mensagem=identificador,
+                payload=payload_mensagem(id_mensagem=identificador, nome="a" * 500),
+            )
+        )
+
+    processar("wamid.AAA")
+    primeiro_update = Contato.objects.get().atualizado_em
+
+    processar("wamid.BBB")
+
+    assert Contato.objects.get().atualizado_em == primeiro_update

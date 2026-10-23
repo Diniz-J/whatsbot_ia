@@ -9,6 +9,7 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.catalogo.models import HorarioFuncionamento
@@ -221,3 +222,54 @@ def test_reservas_abertas_lista_da_proxima_em_diante(restaurante, contato, casa_
         cedo.pk,
         tarde.pk,
     ]
+
+
+def test_mesa_tomada_entre_a_consulta_e_o_insert_e_corrida(
+    restaurante, contato, casa_aberta, monkeypatch
+):
+    """O lado da corrida que a checagem em Python nao alcanca.
+
+    Dois workers passam pela consulta de disponibilidade ao mesmo tempo e so
+    um dos INSERT passa. Aqui a consulta responde "livre" para uma mesa que ja
+    tem reserva, que e exatamente o que o worker perdedor viu.
+    """
+    outra_pessoa = Contato.objects.create(tenant=restaurante, telefone="5511888888888")
+    Reserva.objects.create(
+        tenant=restaurante,
+        mesa=casa_aberta,
+        contato=outra_pessoa,
+        nome="Outra pessoa",
+        pessoas=2,
+        inicio=as_horas(20),
+        status=Reserva.Status.CONFIRMADA,
+    )
+    monkeypatch.setattr(
+        services,
+        "disponibilidade",
+        lambda *args, **kwargs: services.Disponibilidade(
+            inicio=as_horas(20), fim=as_horas(22), pessoas=2, aberto=True, mesas=[casa_aberta]
+        ),
+    )
+
+    with pytest.raises(services.ReservaRecusada) as recusa:
+        fechar(restaurante, contato)
+
+    assert recusa.value.motivo is services.Motivo.CORRIDA
+
+
+def test_outra_recusa_de_validacao_nao_vira_corrida(restaurante, contato, casa_aberta, monkeypatch):
+    """Defeito nosso nao pode chegar ao cliente como "a mesa acabou de sair".
+
+    Traduzir todo `ValidationError` em CORRIDA esconderia a regra que de fato
+    recusou e mandaria o cliente tentar outro horario em vao.
+    """
+
+    def clean_de_outra_regra(self):
+        raise ValidationError({"pessoas": "qualquer regra nova deste clean"})
+
+    monkeypatch.setattr(Reserva, "clean", clean_de_outra_regra)
+
+    with pytest.raises(ValidationError):
+        fechar(restaurante, contato)
+
+    assert not Reserva.objects.exists()
