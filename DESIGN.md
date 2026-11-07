@@ -250,9 +250,43 @@ isolada, nao coleta dia nem numero de pessoas; quem fecha e o hibrido.
   seis.
 - **Teto de reservas futuras por contato**, para o bot nao virar a ferramenta
   mais facil de bloquear a agenda da casa.
-- **Cancelar e remarcar nao tem ferramenta**, e o prompt manda chamar uma
-  pessoa. Agora que o bot fecha, o cliente vai pedir — sem a regra o modelo
-  diria que cancelou. E a fatia seguinte obvia.
+**O bot tambem cancela e remarca** (fatia de out/2026), e nos dois casos
+**sempre a proxima reserva do contato**:
+
+- **Nunca escolhida por numero nem por descricao.** O cliente diz "quero
+  cancelar" e o modelo nao pode decidir entre duas reservas por conta propria:
+  errar ali apaga a mesa de quem ia aparecer. Quem tem mais de uma e quer
+  mexer na outra fala com a equipe, e o prompt manda fazer isso.
+- **Cancelar muda o status, nao apaga a linha.** O historico fica para a
+  equipe, e o horario e liberado porque `STATUS_OCUPAM` nao inclui cancelada.
+- **Remarcar move a mesma linha**, e nao cancela-e-cria. Motivo pratico: o
+  `criar_reserva` devolve a reserva existente quando o intervalo se sobrepoe,
+  entao mover das 20h para as 21h receberia de volta a propria reserva das 20h
+  em vez de criar outra (conferido com sonda antes de escrever o codigo).
+  Motivo de significado: remarcar e uma reserva que mudou de hora, nao duas.
+- **A reserva movida sai da propria conta de ocupacao** (`ignorando` na
+  disponibilidade). Sem isso, mover das 20h para 20h30 na mesma mesa esbarra
+  nela mesma e a resposta e "sem mesa" por causa da reserva que se quer mover
+  — com uma mesa so, nada seria remarcavel.
+- **A mesa atual e mantida quando continua livre**; trocar sem precisar e
+  confusao para a equipe.
+- **Remarcar nao pode cair em cima de outra reserva do proprio contato.** A
+  restricao do banco e por mesa, entao ela nao pega: a movida iria para uma
+  mesa e a outra reserva ficaria na outra, com uma pessoa segurando duas mesas
+  na mesma hora. O `ignorando` do item acima tambem nao cobre — ele tira da
+  conta justamente a reserva que esta sendo movida, nao as outras. E recusa
+  (`OUTRA_RESERVA`) em vez de escolher qual das duas vale, pela mesma razao do
+  primeiro item desta lista. Achado em sonda depois da fatia ter sido escrita:
+  o `criar_reserva` tinha a guarda e o `remarcar_reserva` nao.
+- **O prompt exige confirmacao antes de cancelar**, porque cancelar nao se
+  desfaz, e proibe afirmar antes de a ferramenta confirmar — a mesma regra do
+  fechamento.
+- **O resultado da ferramenta nomeia dia e hora** da reserva afetada: quem tem
+  duas ouviria "cancelado" e nao saberia qual.
+- **O prefixo da recusa vem de quem chamou** (`NAO FECHADA` / `NAO CANCELADA`
+  / `NAO REMARCADA`) e o mapa de motivos guarda so o motivo. Um texto unico
+  fazia uma remarcacao recusada dizer "nao fechada" ao cliente, e o modelo
+  repete o que le.
 
 **Caso deliberado que parece defeito:** entrada que ficou mais de 24h na fila
 grava a reserva e **perde a confirmacao**. O `Responder` nao conhece a janela

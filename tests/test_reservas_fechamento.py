@@ -221,3 +221,180 @@ def test_reservas_abertas_lista_da_proxima_em_diante(restaurante, contato, casa_
         cedo.pk,
         tarde.pk,
     ]
+
+
+def test_cancela_a_proxima_e_diz_qual_foi(restaurante, contato, casa_aberta):
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    cedo, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+    tarde, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(22), 2)
+
+    cancelada = services.cancelar_reserva(restaurante.pk, contato.pk)
+
+    assert cancelada.pk == cedo.pk
+    assert cancelada.status == Reserva.Status.CANCELADA
+    tarde.refresh_from_db()
+    assert tarde.status == Reserva.Status.CONFIRMADA
+
+
+def test_cancelar_libera_o_horario_para_outra_pessoa(restaurante, contato, casa_aberta):
+    """Cancelada nao apaga a linha, mas solta a mesa: e o que `STATUS_OCUPAM` faz."""
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(20), 2)
+    services.cancelar_reserva(restaurante.pk, contato.pk)
+    outro = Contato.objects.create(tenant=restaurante, telefone="5511777777777")
+
+    reserva, criada = services.criar_reserva(restaurante.pk, outro.pk, as_horas(20), 2)
+
+    assert criada
+    assert Reserva.objects.count() == 2
+
+
+def test_cancelar_sem_reserva_futura_e_recusa_explicita(restaurante, contato, casa_aberta):
+    with pytest.raises(services.ReservaRecusada) as erro:
+        services.cancelar_reserva(restaurante.pk, contato.pk)
+
+    assert erro.value.motivo == services.Motivo.SEM_RESERVA
+
+
+def test_remarcar_move_a_mesma_linha(restaurante, contato, casa_aberta):
+    """Remarcar e uma reserva que mudou de hora, nao duas reservas."""
+    original, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(21))
+
+    assert movida.pk == original.pk
+    assert movida.inicio == as_horas(21)
+    assert movida.fim == as_horas(21) + DURACAO_PADRAO
+    assert Reserva.objects.count() == 1
+
+
+def test_remarcar_para_horario_proximo_nao_esbarra_em_si_mesma(restaurante, contato, casa_aberta):
+    """Mover 20h para 20h30 na mesma mesa esbarraria na propria reserva.
+
+    Sem tirar ela da conta de ocupacao, a resposta seria "sem mesa" por causa
+    da reserva que se quer mover — com uma mesa so, nada seria remarcavel.
+    """
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(20), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(20, 30))
+
+    assert movida.inicio == as_horas(20, 30)
+    assert movida.mesa == casa_aberta
+
+
+def test_remarcar_mantem_a_mesa_quando_ela_continua_livre(restaurante, contato, casa_aberta):
+    """Trocar de mesa sem precisar e confusao para a equipe."""
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    original, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(21, 30))
+
+    assert movida.mesa == original.mesa
+
+
+def test_remarcar_troca_de_mesa_quando_a_atual_esta_ocupada(restaurante, contato, casa_aberta):
+    outra = Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+    vizinho = Contato.objects.create(tenant=restaurante, telefone="5511777777777")
+    tomada, _ = services.criar_reserva(restaurante.pk, vizinho.pk, as_horas(21, 30), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(21, 30))
+
+    assert tomada.mesa == casa_aberta
+    assert movida.mesa == outra
+
+
+def test_remarcar_muda_o_tamanho_do_grupo_quando_pedido(restaurante, contato, casa_aberta):
+    """Quem remarca costuma dizer que o grupo mudou no mesmo pedido."""
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(21), pessoas=4)
+
+    assert movida.pessoas == 4
+
+
+def test_remarcar_recusa_grupo_que_nao_cabe(restaurante, contato, casa_aberta):
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+
+    with pytest.raises(services.ReservaRecusada) as erro:
+        services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(21), pessoas=10)
+
+    assert erro.value.motivo == services.Motivo.SEM_MESA
+
+
+def test_remarcar_recusa_fora_do_horario_e_no_passado(restaurante, contato, casa_aberta):
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(20), 2)
+    ontem = timezone.localdate() - timedelta(days=1)
+
+    with pytest.raises(services.ReservaRecusada) as fechado:
+        services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(15))
+    with pytest.raises(services.ReservaRecusada) as passado:
+        services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(20, dia=ontem))
+
+    assert fechado.value.motivo == services.Motivo.FECHADO
+    assert passado.value.motivo == services.Motivo.PASSADO
+
+
+def test_remarcar_sem_reserva_futura_e_recusa_explicita(restaurante, contato, casa_aberta):
+    with pytest.raises(services.ReservaRecusada) as erro:
+        services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(21))
+
+    assert erro.value.motivo == services.Motivo.SEM_RESERVA
+
+
+def test_remarcar_nao_recusa_por_causa_do_teto(restaurante, contato, casa_aberta):
+    """Mover nao cria reserva, entao o teto de reservas abertas nao se aplica."""
+    for numero in range(services.MAX_RESERVAS_ABERTAS):
+        dia = SABADO + timedelta(days=7 * numero)
+        HorarioFuncionamento.objects.get_or_create(
+            tenant=restaurante, dia_semana=dia.weekday(), abre=time(19, 0), fecha=time(23, 0)
+        )
+        Mesa.objects.create(tenant=restaurante, nome=f"Extra {numero}", capacidade=4)
+        services.criar_reserva(restaurante.pk, contato.pk, as_horas(20, dia=dia), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(21, 30))
+
+    assert movida.inicio == as_horas(21, 30)
+
+
+def test_remarcar_a_proxima_nao_toca_na_seguinte(restaurante, contato, casa_aberta):
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    cedo, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+    tarde, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(22), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(19, 30))
+
+    assert movida.pk == cedo.pk
+    tarde.refresh_from_db()
+    assert tarde.inicio == as_horas(22)
+
+
+def test_remarcar_nao_sobrepoe_outra_reserva_do_mesmo_contato(restaurante, contato, casa_aberta):
+    """Remarcar para cima de outra reserva propria daria duas mesas na mesma hora.
+
+    A restricao do banco e por mesa, entao ela nao pega: a movida fica numa
+    mesa e a outra reserva na outra. E `disponibilidade` tira da conta de
+    ocupacao justamente a reserva que esta sendo movida, nao as demais do
+    contato. E o mesmo gasto duplo que o `ja_tem` do `criar_reserva` impede.
+    """
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+    outra, _ = services.criar_reserva(restaurante.pk, contato.pk, as_horas(22), 2)
+
+    with pytest.raises(services.ReservaRecusada) as erro:
+        services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(20, 30))
+
+    assert erro.value.motivo == services.Motivo.OUTRA_RESERVA
+    outra.refresh_from_db()
+    assert outra.inicio == as_horas(22)
+
+
+def test_remarcar_encostando_na_outra_reserva_passa(restaurante, contato, casa_aberta):
+    """O limite e sobreposicao, nao vizinhanca: 20h termina quando 22h comeca."""
+    Mesa.objects.create(tenant=restaurante, nome="Mesa 2", capacidade=4)
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(19), 2)
+    services.criar_reserva(restaurante.pk, contato.pk, as_horas(22), 2)
+
+    movida = services.remarcar_reserva(restaurante.pk, contato.pk, as_horas(20))
+
+    assert movida.inicio == as_horas(20)
+    assert movida.fim == as_horas(22)
