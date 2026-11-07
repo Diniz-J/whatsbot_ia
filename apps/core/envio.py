@@ -90,6 +90,16 @@ def _agendar(conversa: Conversa, texto: str, tipo: str, **extra) -> Mensagem:
     from apps.core.tasks import enviar_outbound
 
     uso = extra.get("uso")
+    # Acesso direto, e nao `getattr(uso, "entrada", None)`: `Resposta` declara
+    # `uso: object | None` — a base do responder nao conhece o tipo do modulo
+    # de IA de proposito — entao o tipo nao impede um objeto sem estes campos,
+    # e um dict e o erro mais facil de cometer. Com default, ele gravaria None
+    # nas duas colunas e o custo desapareceria do faturamento e do teto de
+    # gasto, sem nada reclamar e sem segunda fonte de onde recuperar: o numero
+    # de token so existe neste ponto. `None` e o unico ausente legitimo, o do
+    # tier de regra, que nao gasta token.
+    tokens_entrada = uso.entrada if uso is not None else None
+    tokens_saida = uso.saida if uso is not None else None
     mensagem = Mensagem.objects.create(
         tenant_id=conversa.tenant_id,
         conversa=conversa,
@@ -100,8 +110,8 @@ def _agendar(conversa: Conversa, texto: str, tipo: str, **extra) -> Mensagem:
         template=extra.get("template", ""),
         # Guardado na propria mensagem, igual a categoria de cobranca: o
         # faturamento soma as duas fontes de custo numa consulta.
-        tokens_entrada=getattr(uso, "entrada", None),
-        tokens_saida=getattr(uso, "saida", None),
+        tokens_entrada=tokens_entrada,
+        tokens_saida=tokens_saida,
     )
     transaction.on_commit(
         lambda: enviar_outbound.delay(
