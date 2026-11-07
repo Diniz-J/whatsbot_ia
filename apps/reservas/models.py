@@ -21,6 +21,10 @@ from apps.common.models import BaseModelTenant
 # padrao amanha nao reescreve o que ja foi anotado.
 DURACAO_PADRAO = timedelta(hours=2)
 
+# Codigo da recusa por horario ja ocupado. O servico de fechamento decide por
+# ele, e nao pela frase: so esta recusa significa "a mesa foi tomada".
+SOBREPOSICAO = "sobreposicao"
+
 
 class TsTzRange(models.Func):
     """`tstzrange(inicio, fim, '[)')` para a restricao de sobreposicao."""
@@ -151,7 +155,17 @@ class Reserva(BaseModelTenant):
                 fim__gt=self.inicio,
             ).exclude(pk=self.pk)
             if conflito.exists():
-                raise ValidationError({"inicio": "Esta mesa ja tem reserva nesse horario."})
+                # Com codigo: quem fecha reserva precisa distinguir esta
+                # recusa (a mesa foi tomada) de qualquer outra regra deste
+                # `clean`, para nao dizer ao cliente que houve corrida quando
+                # o defeito foi outro.
+                raise ValidationError(
+                    {
+                        "inicio": ValidationError(
+                            "Esta mesa ja tem reserva nesse horario.", code=SOBREPOSICAO
+                        )
+                    }
+                )
 
 
 # Status que seguram a mesa. Cancelada e nao-compareceu liberam o horario, e e

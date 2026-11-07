@@ -136,3 +136,27 @@ def test_status_chega_pelo_webhook_e_atualiza_a_mensagem(client, restaurante, en
     enviada.refresh_from_db()
     assert enviada.status == Mensagem.Status.ENTREGUE
     assert enviada.categoria_cobranca == CategoriaCobranca.SERVICE
+
+
+def test_callback_atrasado_nao_ressuscita_mensagem_que_falhou(restaurante, enviada):
+    """`failed` encerra a mensagem; `sent` atrasado nao a traz de volta.
+
+    `falhou` nao esta na escala de ORDEM, entao qualquer status dela passava
+    na frente: a mensagem voltava a `enviada`, com o motivo da falha gravado
+    ao lado, e `enviada` conta como entregue ao cliente no historico.
+    """
+    aplicar(restaurante, status="failed", erro=(131026, "Message undeliverable"))
+
+    assert aplicar(restaurante, status="sent") == 0
+
+    enviada.refresh_from_db()
+    assert enviada.status == Mensagem.Status.FALHOU
+    assert "131026" in enviada.erro
+
+
+def test_repeticao_da_mesma_falha_nao_conta_como_mudanca(restaurante, enviada):
+    """A Meta reenvia status; regravar o identico inflaria a contagem."""
+    momento = int((timezone.now() - timedelta(minutes=1)).timestamp())
+    aplicar(restaurante, status="failed", erro=(1, "qualquer"), timestamp=momento)
+
+    assert aplicar(restaurante, status="failed", erro=(1, "qualquer"), timestamp=momento) == 0

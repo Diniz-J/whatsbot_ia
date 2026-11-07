@@ -14,6 +14,10 @@ from apps.conversas.models import Contato, Conversa, EventoWebhook, Mensagem
 
 logger = logging.getLogger(__name__)
 
+# Tamanho da coluna, lido dela: o limite e do banco, e repetir o numero aqui
+# faria as duas verdades divergirem no dia em que a coluna crescer.
+LIMITE_NOME_PERFIL = Contato._meta.get_field("nome_perfil").max_length
+
 
 @transaction.atomic
 def processar_evento(evento: EventoWebhook) -> list[Mensagem]:
@@ -39,15 +43,21 @@ def processar_evento(evento: EventoWebhook) -> list[Mensagem]:
         if entrada.id_externo != evento.id_mensagem:
             continue
 
+        # Cortado no tamanho da coluna: o nome e texto que a pessoa escreve no
+        # perfil dela, e um maior que a coluna viraria DataError aqui dentro —
+        # com o evento nunca marcado como processado e a varredura retentando
+        # para sempre. Quem grava responde pelo limite do banco.
+        nome_perfil = entrada.nome_perfil[:LIMITE_NOME_PERFIL]
+
         contato, _ = Contato.objects.get_or_create(
             tenant_id=evento.tenant_id,
             telefone=entrada.telefone,
-            defaults={"nome_perfil": entrada.nome_perfil},
+            defaults={"nome_perfil": nome_perfil},
         )
         # O nome de perfil muda quando a pessoa troca no WhatsApp; a ultima
         # entrega e a mais confiavel.
-        if entrada.nome_perfil and contato.nome_perfil != entrada.nome_perfil:
-            contato.nome_perfil = entrada.nome_perfil
+        if nome_perfil and contato.nome_perfil != nome_perfil:
+            contato.nome_perfil = nome_perfil
             contato.save(update_fields=["nome_perfil", "atualizado_em"])
 
         conversa, _ = Conversa.objects.get_or_create(tenant_id=evento.tenant_id, contato=contato)

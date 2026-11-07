@@ -38,8 +38,9 @@ tocar na Meta.
 
 Fatia 2b entregue: os callbacks de status (`sent`/`delivered`/`read`/`failed`)
 atualizam a mensagem, a categoria de cobranca que a Meta informa fica gravada
-nela, e uma varredura destrava o que ficou preso (envio reservado por worker
-que morreu, entrega gravada cujo enfileiramento se perdeu).
+nela, e uma varredura destrava o que ficou preso: envio reservado por worker
+que morreu, saida gravada que nunca foi reclamada, entrega gravada cujo
+enfileiramento se perdeu e entrada que nunca foi atendida.
 
 A varredura precisa de um processo `celery beat` no ar; sem ele o agendamento
 e inerte.
@@ -49,24 +50,46 @@ de funcionamento (inclusive faixa que passa da meia-noite), com back-office
 em que o dono do negocio edita tudo. `catalogo/services.py` e a fonte unica
 dessas respostas — e o que o invariante 2 exige.
 
-`RuleResponder` entregue: o bot atende de verdade. Cinco funcoes — saudacao,
-cardapio, preco de item, horario de funcionamento e fallback que oferece
-gente. Tudo que ele afirma sai de `catalogo/services.py`; nada e inventado.
+`RuleResponder` entregue: o bot atende de verdade. Saudacao, cardapio, preco
+de item, horario de funcionamento, assunto de reserva (que ele reconhece e
+passa para gente, sem afirmar disponibilidade) e fallback que oferece uma
+pessoa. Tudo que ele afirma sai de `catalogo/services.py`; nada e inventado.
 Item sem preco cadastrado recebe "nao tenho o preco aqui", nao um numero.
 
 `LLMResponder` entregue: o tier hibrido. O modelo entende a pergunta em
 linguagem natural, mas preco, horario e disponibilidade saem de ferramenta — e
-as ferramentas SAO as funcoes de `catalogo/services.py`, com teste conferindo
-identidade objeto a objeto. O `tenant_id` nao aparece em schema nenhum: e
-injetado do contexto, para texto de cliente final nao alcancar catalogo
-alheio. Falha do modelo cai no tier de regra em vez de deixar sem resposta.
+as ferramentas SAO as funcoes de `catalogo/services.py` e
+`reservas/services.py`, com teste conferindo identidade objeto a objeto. O
+`tenant_id` e o contato nao aparecem em schema nenhum: sao injetados do
+contexto, para texto de cliente final nao alcancar catalogo alheio nem
+reservar no nome de outra pessoa. Falha do modelo cai no tier de regra em vez
+de deixar sem resposta.
 
 Trocar de tier e mudar um campo no admin: `Configuracao.responder`.
 
-Os apps `reservas` e `metricas` ainda estao vazios. Token gasto fica na
-propria mensagem (`tokens_entrada`/`tokens_saida`), ao lado da categoria de
-cobranca — agora ha duas fontes de custo numa consulta, que e o que o
-`metricas` precisava para existir.
+Historico de conversa entregue: o atendimento recebe as falas anteriores do
+fio, entao consegue perguntar o que falta em vez de responder cada mensagem
+sozinha. Dois limites, porque cada um sozinho falha: a janela de servico, para
+a conversa da semana passada nao voltar, e o teto de turnos
+(`HISTORICO_MAX_TURNOS`), para um dia movimentado nao virar prompt gigante. O
+tier de regra ignora o historico por construcao, com teste fixando que a
+resposta dele e identica com e sem.
+
+`reservas` entregue: mesa, reserva e disponibilidade, numa tabela so para o
+que o bot fecha e o que a equipe anota no balcao — disponibilidade so e
+verdade se as duas contarem igual. Sobreposicao de horario na mesma mesa e
+recusada pelo banco (`ExclusionConstraint`), e nao por checagem em Python, que
+dois workers atravessam ao mesmo tempo. O bot fecha reserva pela ferramenta,
+reconferindo a disponibilidade na hora da escrita e com teto de reservas
+futuras por contato; cancelar e remarcar ainda chamam uma pessoa.
+
+`metricas` entregue: custo por mensagem entregue e por token, por cliente,
+derivado do historico de mensagens em vez de um contador paralelo — token
+gasto fica na propria mensagem (`tokens_entrada`/`tokens_saida`), ao lado da
+categoria de cobranca que a Meta reportou. O preco vem de tabela datada
+(`TabelaPreco`), para um reajuste nao reescrever o custo de meses ja
+faturados; sem tabela cadastrada o custo e indefinido, nao zero. A leitura e o
+comando `metricas_resumo`.
 
 Webhook em `POST /webhook/whatsapp/` (e `GET` para a verificacao da Meta).
 
@@ -101,6 +124,7 @@ uv run python manage.py migrate
 uv run python manage.py createsuperuser
 uv run python manage.py runserver        # admin em /painel/ (ver ADMIN_URL)
 uv run celery -A config worker -l info   # em outro terminal
+uv run celery -A config beat -l info     # sem ele a varredura nao roda
 ```
 
 Qualidade, o mesmo que o CI roda:

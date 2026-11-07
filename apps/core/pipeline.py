@@ -24,51 +24,44 @@ logger = logging.getLogger(__name__)
 def responder_mensagem(mensagem_id: int) -> Mensagem | None:
     """Responde uma mensagem de entrada. Devolve a resposta agendada, ou None.
 
-    Idempotente: `respondida_em` e lido com lock, porque a fila pode
-    reentregar a tarefa e responder duas vezes seria visivel para o cliente
-    do cliente — e cobrado, se virar template.
+    Em tres fases, e a do meio fora de transacao de proposito. Redigir leva
+    dezenas de segundos no tier de IA (`LLM_TIMEOUT` por volta de ferramenta),
+    e chamada de rede nao pode segurar lock de linha nem transacao aberta —
+    e a mesma regra que o `enviar_outbound` ja segue no envio.
+
+    A idempotencia nao vem de reservar antes de redigir, e sim do carimbo de
+    `respondida_em` com lock na fase 3: quem chega e encontra o campo
+    preenchido descarta o que redigiu em vez de mandar. Duas execucoes
+    simultaneas podem redigir duas vezes, e no tier de IA pagar duas vezes,
+    mas **uma so responde** — o cliente do cliente nunca recebe resposta
+    dobrada, que e o que custa caro (e seria cobrado, num template).
+
+    Excecao ao redigir deixa `respondida_em` nulo, entao a varredura reatende
+    dentro da janela de servico. Antes isso dependia do rollback; agora e so o
+    carimbo nunca ter acontecido.
     """
-    with transaction.atomic():
-        mensagem = _reservar(mensagem_id)
-        if mensagem is None:
-            return None
+    preparo = _preparar(mensagem_id)
+    if preparo is None:
+        return None
+    mensagem, configuracao, pergunta, contexto = preparo
 
-        configuracao = _configuracao(mensagem.tenant_id)
-        if configuracao is None:
-            logger.error("Cliente %s sem configuracao: nao da para atender", mensagem.tenant_id)
-            return None
+    resposta = responder_para(configuracao).handle(pergunta, contexto)
+    if resposta is None:
+        logger.info("Atendimento optou por nao responder a mensagem %s", mensagem_id)
+        return None
 
-        resposta = responder_para(configuracao).handle(
-            Pergunta(texto=mensagem.texto, tipo=mensagem.tipo),
-            Contexto(
-                tenant_id=mensagem.tenant_id,
-                nome_contato=mensagem.conversa.contato.nome_perfil,
-                historico=_historico(mensagem),
-                contato_id=mensagem.conversa.contato_id,
-            ),
-        )
-        if resposta is None:
-            logger.info("Atendimento optou por nao responder a mensagem %s", mensagem_id)
-            return None
-
-        try:
-            return agendar_texto(mensagem.conversa, resposta.texto, uso=resposta.uso)
-        except JanelaFechada:
-            # A entrada do cliente abre a janela, entao isto so acontece se a
-            # mensagem ficou mais de 24h na fila. Responder por template
-            # custaria dinheiro para entregar uma resposta velha.
-            logger.warning(
-                "Mensagem %s saiu da janela antes de ser respondida; sem resposta", mensagem_id
-            )
-            return None
+    return _carimbar_e_agendar(mensagem, resposta)
 
 
-def _reservar(mensagem_id: int) -> Mensagem | None:
+def _preparar(mensagem_id: int):
+    """Le o que o atendimento precisa saber. Sem lock, porque nada e gravado.
+
+    A checagem de `respondida_em` aqui e so para nao gastar token redigindo o
+    que ja foi respondido; quem garante a unicidade e a fase 3.
+    """
     try:
-        mensagem = (
-            Mensagem.objects.select_for_update()
-            .select_related("conversa", "conversa__contato")
-            .get(pk=mensagem_id)
+        mensagem = Mensagem.objects.select_related("conversa", "conversa__contato").get(
+            pk=mensagem_id
         )
     except Mensagem.DoesNotExist:
         logger.error("Mensagem %s nao existe mais", mensagem_id)
@@ -81,9 +74,56 @@ def _reservar(mensagem_id: int) -> Mensagem | None:
         logger.info("Mensagem %s ja foi respondida", mensagem_id)
         return None
 
-    mensagem.respondida_em = timezone.now()
-    mensagem.save(update_fields=["respondida_em", "atualizado_em"])
-    return mensagem
+    configuracao = _configuracao(mensagem.tenant_id)
+    if configuracao is None:
+        logger.error("Cliente %s sem configuracao: nao da para atender", mensagem.tenant_id)
+        return None
+
+    return (
+        mensagem,
+        configuracao,
+        Pergunta(texto=mensagem.texto, tipo=mensagem.tipo),
+        Contexto(
+            tenant_id=mensagem.tenant_id,
+            nome_contato=mensagem.conversa.contato.nome_perfil,
+            historico=_historico(mensagem),
+            contato_id=mensagem.conversa.contato_id,
+        ),
+    )
+
+
+def _carimbar_e_agendar(mensagem: Mensagem, resposta) -> Mensagem | None:
+    """Carimba a entrada e agenda a saida, numa transacao curta.
+
+    O lock vale por esta transacao, que nao fala com rede nenhuma: o que ele
+    serializa e a leitura do carimbo, e e isso que faz reentrega da fila nao
+    virar duas respostas ao cliente.
+    """
+    with transaction.atomic():
+        atual = Mensagem.objects.select_for_update().get(pk=mensagem.pk)
+        if atual.respondida_em is not None:
+            # Outra execucao respondeu enquanto esta redigia. O texto redigido
+            # aqui e descartado: o token ja foi gasto, mas mandar seria o
+            # cliente recebendo a mesma resposta duas vezes.
+            logger.warning(
+                "Mensagem %s ja respondida por outra execucao; resposta descartada", mensagem.pk
+            )
+            return None
+
+        atual.respondida_em = timezone.now()
+        atual.save(update_fields=["respondida_em", "atualizado_em"])
+
+        try:
+            return agendar_texto(mensagem.conversa, resposta.texto, uso=resposta.uso)
+        except JanelaFechada:
+            # A entrada do cliente abre a janela, entao isto so acontece se a
+            # mensagem ficou mais de 24h na fila. Responder por template
+            # custaria dinheiro para entregar uma resposta velha. O carimbo
+            # fica: insistir nao entregaria nada.
+            logger.warning(
+                "Mensagem %s saiu da janela antes de ser respondida; sem resposta", mensagem.pk
+            )
+            return None
 
 
 def _historico(mensagem: Mensagem) -> tuple[Turno, ...]:

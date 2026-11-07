@@ -193,7 +193,12 @@ class RuleResponder(Responder):
 
     @staticmethod
     def _saudar(contexto: Contexto) -> str:
-        nome = f" {contexto.nome_contato.split()[0]}" if contexto.nome_contato else ""
+        # `split` e nao `split()[0]` direto: o nome vem do perfil do WhatsApp,
+        # entao um nome so de espaco e truthy e sai da divisao vazio. A
+        # excecao ali derrubava o atendimento, a transacao desfazia o carimbo
+        # de respondida e a varredura reatendia a mesma mensagem a cada volta.
+        partes = (contexto.nome_contato or "").split()
+        nome = f" {partes[0]}" if partes else ""
         return (
             f"Oi{nome}! Posso te passar o cardapio, o preco de um item, o nosso horario "
             "ou falar de reserva. O que voce precisa?"

@@ -60,6 +60,19 @@ def test_saudacao_sem_nome_nao_fica_torta(bot, restaurante):
     assert resposta.texto.startswith("Oi!")
 
 
+@pytest.mark.parametrize("nome", [" ", "   ", "\n", "\t"])
+def test_saudacao_com_nome_em_branco_nao_estoura(bot, restaurante, nome):
+    """O nome vem do perfil do WhatsApp: so espaco e truthy e divide vazio.
+
+    A excecao ali nao ficava contida: ela subia pelo atendimento, a transacao
+    do pipeline desfazia o carimbo de `respondida_em` e a varredura escolhia a
+    mesma mensagem a cada volta — gastando token em toda uma, no tier de IA.
+    """
+    resposta = responder(bot, Contexto(tenant_id=restaurante.id, nome_contato=nome), "oi")
+
+    assert resposta.texto.startswith("Oi!")
+
+
 @pytest.mark.parametrize("texto", ["cardapio", "cardápio", "manda o MENU", "o que tem?"])
 def test_cardapio_lista_por_categoria_com_acento_ou_sem(bot, contexto, menu, texto):
     resposta = responder(bot, contexto, texto)

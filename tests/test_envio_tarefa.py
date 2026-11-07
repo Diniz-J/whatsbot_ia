@@ -42,9 +42,10 @@ def test_envia_texto_e_guarda_o_id(conversa, canal):
 
 
 def test_envia_template_com_idioma_e_variaveis(conversa, canal):
+    """A tarefa recebe so o id: idioma e variaveis saem da propria linha."""
     mensagem = agendar_template(conversa, "confirmacao_reserva", variaveis=["20h"])
 
-    tasks.enviar_outbound(mensagem.pk, idioma="pt_BR", variaveis=["20h"])
+    tasks.enviar_outbound(mensagem.pk)
 
     assert canal.enviadas == [
         {

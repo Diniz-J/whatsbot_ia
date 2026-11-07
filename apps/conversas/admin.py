@@ -6,6 +6,7 @@ reescrever historico de atendimento.
 """
 
 from django.contrib import admin
+from unfold.admin import TabularInline
 
 from apps.common.admin import OperacaoModelAdmin, TenantScopedModelAdmin
 from apps.conversas.models import Contato, Conversa, EventoWebhook, Mensagem
@@ -22,7 +23,7 @@ class SomenteLeituraMixin:
         return False
 
 
-class MensagemInline(admin.TabularInline):
+class MensagemInline(TabularInline):
     model = Mensagem
     extra = 0
     can_delete = False
