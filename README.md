@@ -111,3 +111,14 @@ uv run python manage.py check
 uv run python manage.py makemigrations --check --dry-run
 uv run pytest
 ```
+
+Antes de subir um cliente, com o ambiente de producao carregado:
+
+```bash
+uv run python manage.py check --deploy
+```
+
+Nao esta no CI porque o ambiente de CI nao e de producao: a checagem recusa
+exatamente a configuracao vazia que o CI usa. Ela cobre as credenciais do
+webhook (`canal.E001`/`E002`, que falham fechado e em silencio) e o hardening
+que o proprio Django confere (`SECURE_SSL`, HSTS, cookie `secure`).
