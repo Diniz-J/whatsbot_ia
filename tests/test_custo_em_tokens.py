@@ -95,3 +95,27 @@ def test_resposta_da_regra_nao_grava_token(restaurante, menu):
 
     assert saida.tokens_entrada is None
     assert saida.tokens_saida is None
+
+
+def test_uso_sem_os_campos_de_token_nao_passa_em_silencio(restaurante):
+    """Objeto errado no lugar do uso tem que estourar, nao virar None.
+
+    `Resposta` declara `uso: object | None` — a base do responder nao conhece
+    o tipo do modulo de IA de proposito — entao o tipo nao impede um objeto
+    sem `entrada`/`saida`, e um dict e o erro mais facil de cometer. Lido com
+    default, ele gravava None nas duas colunas: o custo desaparecia do
+    faturamento e do teto de gasto, sem nada reclamar e sem segunda fonte de
+    onde recuperar, porque o numero de token so existe neste ponto.
+    """
+    from apps.conversas.models import Contato, Conversa
+    from apps.core.envio import agendar_texto
+
+    contato = Contato.objects.create(tenant=restaurante, telefone="5511999999999")
+    conversa = Conversa.objects.create(
+        tenant=restaurante, contato=contato, ultima_entrada_em=timezone.now()
+    )
+
+    with pytest.raises(AttributeError):
+        agendar_texto(conversa, "resposta", uso={"entrada": 200, "saida": 40})
+
+    assert Mensagem.objects.filter(direcao=Mensagem.Direcao.SAIDA).exists() is False

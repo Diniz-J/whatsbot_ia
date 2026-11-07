@@ -81,13 +81,34 @@ def processar_evento(evento: EventoWebhook) -> list[Mensagem]:
 
 
 def _avancar_janela(conversa: Conversa, momento) -> None:
-    """Move a janela de 24h para frente, nunca para tras.
+    """Move a janela de 24h para frente, nunca para tras — e nunca para depois
+    de agora.
 
     A janela conta da ultima mensagem do cliente, entao ela so anda no
     caminho de entrada — e so para frente: processar fora de ordem, ou
     reprocessar uma entrega antiga, nao pode encurtar uma janela que ja
     estava aberta por uma mensagem mais nova.
+
+    O instante vem do `timestamp` do payload, e nada garante que ele seja
+    passado: relogio torto do lado de la basta. Gravado cru, a janela ficaria
+    "aberta" por todo esse tempo e o bot mandaria texto livre que a Meta
+    recusa por estar fora das 24h de verdade — o cliente nao receberia nada. E
+    como a janela so anda para frente, a mensagem real seguinte nao corrigiria
+    o valor: aquela conversa ficaria quebrada ate o futuro chegar. Por isso o
+    corte e aqui, na gravacao, e nao na leitura.
+
+    `agora` e o limite certo porque a entrega chegou: o cliente mandou no
+    maximo neste instante, nunca depois dele.
     """
+    agora = timezone.now()
+    if momento > agora:
+        logger.warning(
+            "Timestamp no futuro na conversa %s (%s): janela ancorada em agora",
+            conversa.pk,
+            momento,
+        )
+        momento = agora
+
     if conversa.ultima_entrada_em is not None and momento <= conversa.ultima_entrada_em:
         return
     conversa.ultima_entrada_em = momento

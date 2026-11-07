@@ -11,6 +11,18 @@ from apps.canal.whatsapp.client import ClienteGraph
 logger = logging.getLogger(__name__)
 
 
+def _lista(bruto) -> list:
+    """O valor quando e lista, lista vazia quando nao e.
+
+    `bruto or []` defendia contra campo ausente e contra lista de lixo (cada
+    item ainda passa por `isinstance`), mas nao contra o campo ser um escalar:
+    `for x in 5` levanta TypeError, e isso no webhook vira 500 num caminho
+    escrito para responder 403 ou 200. A assinatura prova que a entrega veio
+    da Meta, nao que o corpo faz sentido.
+    """
+    return bruto if isinstance(bruto, list) else []
+
+
 def _valores(payload: dict):
     """Percorre os blocos `value` de uma entrega, que vem aninhados.
 
@@ -18,10 +30,10 @@ def _valores(payload: dict):
     mais de um bloco. Tudo que nao for dicionario e descartado: o payload vem
     de fora e nao se confia no formato.
     """
-    for entrada in payload.get("entry") or []:
+    for entrada in _lista(payload.get("entry")):
         if not isinstance(entrada, dict):
             continue
-        for mudanca in entrada.get("changes") or []:
+        for mudanca in _lista(entrada.get("changes")):
             if not isinstance(mudanca, dict):
                 continue
             valor = mudanca.get("value")
@@ -108,7 +120,7 @@ class CanalWhatsApp(Canal):
         """
         status = []
         for valor in _valores(payload):
-            for bruto in valor.get("statuses") or []:
+            for bruto in _lista(valor.get("statuses")):
                 if not isinstance(bruto, dict):
                     continue
                 id_externo = bruto.get("id")
@@ -136,8 +148,8 @@ class CanalWhatsApp(Canal):
         Guardado como texto porque o que interessa e a pessoa que le a
         conversa entender por que nao chegou, nao o codigo em si.
         """
-        erros = bruto.get("errors")
-        if not isinstance(erros, list) or not erros:
+        erros = _lista(bruto.get("errors"))
+        if not erros:
             return ""
         primeiro = erros[0]
         if not isinstance(primeiro, dict):
@@ -171,7 +183,7 @@ class CanalWhatsApp(Canal):
         for valor in _valores(payload):
             nomes = self._nomes_por_telefone(valor)
 
-            for bruta in valor.get("messages") or []:
+            for bruta in _lista(valor.get("messages")):
                 if not isinstance(bruta, dict):
                     continue
                 id_externo = bruta.get("id")
@@ -198,7 +210,7 @@ class CanalWhatsApp(Canal):
     def _nomes_por_telefone(valor: dict) -> dict[str, str]:
         """O nome de perfil vem num bloco separado das mensagens, por wa_id."""
         nomes = {}
-        for contato in valor.get("contacts") or []:
+        for contato in _lista(valor.get("contacts")):
             if not isinstance(contato, dict):
                 continue
             wa_id = contato.get("wa_id")

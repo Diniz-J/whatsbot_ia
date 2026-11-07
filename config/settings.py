@@ -129,6 +129,12 @@ WHATSAPP_APP_SECRET = config("WHATSAPP_APP_SECRET", default="")
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = config("WHATSAPP_WEBHOOK_VERIFY_TOKEN", default="")
 WHATSAPP_API_VERSION = config("WHATSAPP_API_VERSION", default="v21.0")
 WHATSAPP_TIMEOUT = config("WHATSAPP_TIMEOUT", default=10.0, cast=float)
+# Tamanho maximo do corpo de texto que a Cloud API aceita. Acima disso ela
+# recusa, a recusa e permanente e o cliente nao recebe nada — por isso o
+# `agendar_texto` corta antes de mandar.
+# CONFIRMAR na doc da Meta antes do primeiro cliente: 4096 e o numero que eu
+# tinha em mente e nao conferi na fonte. O mecanismo vale para qualquer valor.
+WHATSAPP_TEXTO_MAX = config("WHATSAPP_TEXTO_MAX", default=4096, cast=int)
 # Em desenvolvimento, nao falar com a Meta de verdade. Em teste o default e
 # ligado: desde que o bot responde sozinho, um envio sai de qualquer entrega
 # processada, e uma credencial em fixture bastaria para a suite fazer chamada
@@ -145,17 +151,30 @@ LLM_MODEL = config("LLM_MODEL", default="claude-haiku-5-5")
 LLM_EFFORT = config("LLM_EFFORT", default="low")
 # Teto do que o modelo pode gerar numa resposta, nao orcamento de gasto: a
 # cobranca e pelo token realmente gerado, e o prompt ja pede resposta de duas
-# ou tres frases. Folgado de proposito — o teto e compartilhado com o
-# raciocinio do adaptive thinking e com os blocos de pedido de ferramenta, e
-# estourar nao trunca em silencio: o cliente recusa a resposta cortada e cai
-# no tier de regra, que responde pior. 1024 deixava essa margem curta.
-LLM_MAX_TOKENS = config("LLM_MAX_TOKENS", default=16000, cast=int)
+# ou tres frases. O teto e compartilhado com o raciocinio do adaptive thinking
+# e com os blocos de pedido de ferramenta, entao precisa de folga.
+#
+# Mas a folga tem limite do lado do canal, e nao do modelo: o texto final tem
+# que caber numa mensagem de WhatsApp (`WHATSAPP_TEXTO_MAX`). 16000 projetava
+# texto uma ordem de grandeza acima do que a Meta aceita — dimensionar isto
+# pela cabeca do modelo e esquecer o canal foi erro meu. O corte no
+# `agendar_texto` e a rede embaixo; este numero e o que evita precisar dela.
+LLM_MAX_TOKENS = config("LLM_MAX_TOKENS", default=4000, cast=int)
 LLM_TIMEOUT = config("LLM_TIMEOUT", default=30.0, cast=float)
 # Quantas falas anteriores o atendimento recebe. Dois limites, porque cada um
 # sozinho falha: o teto de turnos impede que um dia movimentado vire prompt
 # gigante, e a janela de servico (no pipeline) impede que a conversa da semana
 # passada volte. Historico e token de entrada em toda mensagem.
 HISTORICO_MAX_TURNOS = config("HISTORICO_MAX_TURNOS", default=10, cast=int)
+# Teto de token por mes de calendario. Passando dele, o atendimento cai no
+# tier de regra: o cliente continua sendo atendido, pior, e a conta para de
+# crescer. Zero desliga.
+#
+# Nasce desligado de proposito. O numero depende do volume real do cliente, e
+# um default generoso cortaria o servico de quem manda mais mensagem do que eu
+# supus — pior que nao ter teto. O `manage.py metricas_resumo` da o numero
+# medido para preencher aqui.
+LLM_TETO_TOKENS_MES = config("LLM_TETO_TOKENS_MES", default=0, cast=int)
 
 # Quanto tempo num estado nao-final conta como travado. Generoso porque o
 # timeout de envio e de segundos: o que passa disto nao esta em voo.

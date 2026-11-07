@@ -142,8 +142,30 @@ Como ficou (out/2026):
 - **A tabela de preco e da operacao, nao do cliente.** E o que a plataforma
   paga a Meta e a Anthropic; editavel pelo cliente, o custo faturado seria
   reescrito por quem o paga.
+- **Teto de gasto em token por mes (`LLM_TETO_TOKENS_MES`), e o freio que o
+  `metricas` faltava ter.** Medir custo sem conseguir parar nada so avisa
+  depois. Passando do teto, o `responder_para` devolve o tier de regra: o
+  cliente final continua atendido, pior, e a conta para de crescer — a mesma
+  escolha do fallback de falha do modelo, por nao ser dele a culpa do
+  orcamento.
+
+  Mora no registry porque estourar orcamento e uma decisao de tier, e assim o
+  modulo de IA segue sem saber que existe orcamento. O tier de regra nao
+  consulta gasto (nao custa token, e seria consulta por mensagem sem motivo).
+
+  **Nasce desligado**, e isso e escolha e nao esquecimento: o numero depende do
+  volume real do cliente, e um default generoso cortaria o servico de quem
+  manda mais mensagem do que se supos — pior que nao ter teto. O
+  `manage.py metricas_resumo` da o numero medido para preencher.
+
+  Conferido antes da chamada, entao o atendimento que cruza o teto termina e
+  passa um pouco: contar antes custaria uma chamada para saber quanto a chamada
+  vai custar.
+
 - Pendente: reajuste no meio do periodo nao parte o calculo em dois (o periodo
-  usa a tabela vigente no inicio dele), e nao ha teto de gasto por cliente.
+  usa a tabela vigente no inicio dele), e o teto e por token e nao por dinheiro
+  — converter exige tabela de preco cadastrada, e teto que nao se aplica em
+  silencio por falta de tabela seria pior que teto em token.
 
 ## 8. Topologia de deploy e isolamento
 
@@ -190,6 +212,15 @@ separacao e vazamento.
 - Backup e por banco, com restore testado por cliente.
 - Rota do admin configuravel no `urls.py` (nao deixar no `/admin/` padrao);
   proteger com 2FA, rate limit e, se possivel, allowlist de IP.
+- **`manage.py check --deploy` e passo de subida**, nao enfeite. As duas
+  credenciais do webhook nascem vazias e falham fechado: sem elas o sistema
+  sobe, atende o admin, e recusa toda entrega da Meta com 403 e uma linha de
+  WARNING, ate a Meta desativar a subscription por acumulo de erro. Falhar
+  fechado e certo; o que faltava era alguem dizer o porque. Fica como checagem
+  de deploy (`canal.E001`/`E002`) e nao comum porque em dev e na suite as duas
+  estao vazias de proposito. O hardening de HTTPS/HSTS/cookie nao tem checagem
+  nossa: o Django ja cobre em `security.W004`/`W008`/`W012`/`W016`, no mesmo
+  `--deploy` — ali o que faltava nao era a checagem, era rodar.
 
 **O que ainda nao existe:** template de stack por cliente, provisionamento,
 migrate e rotacao de secret automatizados. Sem isso, B nao chega no terceiro
@@ -250,9 +281,43 @@ isolada, nao coleta dia nem numero de pessoas; quem fecha e o hibrido.
   seis.
 - **Teto de reservas futuras por contato**, para o bot nao virar a ferramenta
   mais facil de bloquear a agenda da casa.
-- **Cancelar e remarcar nao tem ferramenta**, e o prompt manda chamar uma
-  pessoa. Agora que o bot fecha, o cliente vai pedir — sem a regra o modelo
-  diria que cancelou. E a fatia seguinte obvia.
+**O bot tambem cancela e remarca** (fatia de out/2026), e nos dois casos
+**sempre a proxima reserva do contato**:
+
+- **Nunca escolhida por numero nem por descricao.** O cliente diz "quero
+  cancelar" e o modelo nao pode decidir entre duas reservas por conta propria:
+  errar ali apaga a mesa de quem ia aparecer. Quem tem mais de uma e quer
+  mexer na outra fala com a equipe, e o prompt manda fazer isso.
+- **Cancelar muda o status, nao apaga a linha.** O historico fica para a
+  equipe, e o horario e liberado porque `STATUS_OCUPAM` nao inclui cancelada.
+- **Remarcar move a mesma linha**, e nao cancela-e-cria. Motivo pratico: o
+  `criar_reserva` devolve a reserva existente quando o intervalo se sobrepoe,
+  entao mover das 20h para as 21h receberia de volta a propria reserva das 20h
+  em vez de criar outra (conferido com sonda antes de escrever o codigo).
+  Motivo de significado: remarcar e uma reserva que mudou de hora, nao duas.
+- **A reserva movida sai da propria conta de ocupacao** (`ignorando` na
+  disponibilidade). Sem isso, mover das 20h para 20h30 na mesma mesa esbarra
+  nela mesma e a resposta e "sem mesa" por causa da reserva que se quer mover
+  — com uma mesa so, nada seria remarcavel.
+- **A mesa atual e mantida quando continua livre**; trocar sem precisar e
+  confusao para a equipe.
+- **Remarcar nao pode cair em cima de outra reserva do proprio contato.** A
+  restricao do banco e por mesa, entao ela nao pega: a movida iria para uma
+  mesa e a outra reserva ficaria na outra, com uma pessoa segurando duas mesas
+  na mesma hora. O `ignorando` do item acima tambem nao cobre — ele tira da
+  conta justamente a reserva que esta sendo movida, nao as outras. E recusa
+  (`OUTRA_RESERVA`) em vez de escolher qual das duas vale, pela mesma razao do
+  primeiro item desta lista. Achado em sonda depois da fatia ter sido escrita:
+  o `criar_reserva` tinha a guarda e o `remarcar_reserva` nao.
+- **O prompt exige confirmacao antes de cancelar**, porque cancelar nao se
+  desfaz, e proibe afirmar antes de a ferramenta confirmar — a mesma regra do
+  fechamento.
+- **O resultado da ferramenta nomeia dia e hora** da reserva afetada: quem tem
+  duas ouviria "cancelado" e nao saberia qual.
+- **O prefixo da recusa vem de quem chamou** (`NAO FECHADA` / `NAO CANCELADA`
+  / `NAO REMARCADA`) e o mapa de motivos guarda so o motivo. Um texto unico
+  fazia uma remarcacao recusada dizer "nao fechada" ao cliente, e o modelo
+  repete o que le.
 
 **Caso deliberado que parece defeito:** entrada que ficou mais de 24h na fila
 grava a reserva e **perde a confirmacao**. O `Responder` nao conhece a janela

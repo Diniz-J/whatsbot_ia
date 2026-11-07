@@ -21,6 +21,8 @@ def test_cada_ferramenta_e_a_propria_funcao_de_servico():
         "verificar_disponibilidade": reservas.disponibilidade,
         "horarios_livres": reservas.horarios_livres,
         "fechar_reserva": reservas.criar_reserva,
+        "cancelar_reserva": reservas.cancelar_reserva,
+        "remarcar_reserva": reservas.remarcar_reserva,
     }
 
 
@@ -35,6 +37,8 @@ def test_identidade_objeto_a_objeto():
     assert ferramentas.FERRAMENTAS["verificar_disponibilidade"] is reservas.disponibilidade
     assert ferramentas.FERRAMENTAS["horarios_livres"] is reservas.horarios_livres
     assert ferramentas.FERRAMENTAS["fechar_reserva"] is reservas.criar_reserva
+    assert ferramentas.FERRAMENTAS["cancelar_reserva"] is reservas.cancelar_reserva
+    assert ferramentas.FERRAMENTAS["remarcar_reserva"] is reservas.remarcar_reserva
 
 
 def test_nenhuma_ferramenta_declarada_sem_servico_atras():
@@ -113,17 +117,29 @@ def test_prompt_manda_perguntar_o_que_falta_para_fechar():
     assert "Nao complete nenhuma delas" in texto
 
 
-def test_prompt_nao_deixa_cancelar_nem_mudar():
-    """Agora que o bot fecha, o cliente vai pedir para desmarcar.
+def test_prompt_so_mexe_na_proxima_reserva():
+    """Cancelar e remarcar existem agora, mas sempre na proxima reserva.
 
-    Cancelamento nao tem ferramenta nesta fatia, e sem a regra o modelo diria
-    que cancelou.
+    O modelo escolhendo entre duas reservas apagaria a mesa de quem ia
+    aparecer. A regra anterior proibia cancelar; o que mudou e quem faz, nao a
+    proibicao de escolher.
     """
     from apps.responder.llm.prompt import sistema
 
     texto = sistema("Cantina do Ze")
 
-    assert "Cancelar ou mudar reserva voce NAO faz" in texto
+    assert "sempre a PROXIMA" in texto
+    assert "Voce nao escolhe qual reserva" in texto
+
+
+def test_prompt_exige_confirmacao_antes_de_cancelar():
+    """Cancelar nao se desfaz: chamar por engano apaga a reserva de verdade."""
+    from apps.responder.llm.prompt import sistema
+
+    texto = sistema("Cantina do Ze")
+
+    assert "Cancelar nao se desfaz" in texto
+    assert "Na duvida, pergunte antes" in texto
 
 
 def test_prompt_informa_o_agora_para_a_conversao_de_data():
