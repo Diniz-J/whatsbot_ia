@@ -142,8 +142,30 @@ Como ficou (out/2026):
 - **A tabela de preco e da operacao, nao do cliente.** E o que a plataforma
   paga a Meta e a Anthropic; editavel pelo cliente, o custo faturado seria
   reescrito por quem o paga.
+- **Teto de gasto em token por mes (`LLM_TETO_TOKENS_MES`), e o freio que o
+  `metricas` faltava ter.** Medir custo sem conseguir parar nada so avisa
+  depois. Passando do teto, o `responder_para` devolve o tier de regra: o
+  cliente final continua atendido, pior, e a conta para de crescer — a mesma
+  escolha do fallback de falha do modelo, por nao ser dele a culpa do
+  orcamento.
+
+  Mora no registry porque estourar orcamento e uma decisao de tier, e assim o
+  modulo de IA segue sem saber que existe orcamento. O tier de regra nao
+  consulta gasto (nao custa token, e seria consulta por mensagem sem motivo).
+
+  **Nasce desligado**, e isso e escolha e nao esquecimento: o numero depende do
+  volume real do cliente, e um default generoso cortaria o servico de quem
+  manda mais mensagem do que se supos — pior que nao ter teto. O
+  `manage.py metricas_resumo` da o numero medido para preencher.
+
+  Conferido antes da chamada, entao o atendimento que cruza o teto termina e
+  passa um pouco: contar antes custaria uma chamada para saber quanto a chamada
+  vai custar.
+
 - Pendente: reajuste no meio do periodo nao parte o calculo em dois (o periodo
-  usa a tabela vigente no inicio dele), e nao ha teto de gasto por cliente.
+  usa a tabela vigente no inicio dele), e o teto e por token e nao por dinheiro
+  — converter exige tabela de preco cadastrada, e teto que nao se aplica em
+  silencio por falta de tabela seria pior que teto em token.
 
 ## 8. Topologia de deploy e isolamento
 

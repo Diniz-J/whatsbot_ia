@@ -179,3 +179,25 @@ def periodo_do_mes(ano: int, mes: int) -> tuple[datetime, datetime]:
         timezone.make_aware(datetime.combine(primeiro, time.min), fuso),
         timezone.make_aware(datetime.combine(seguinte, time.min), fuso),
     )
+
+
+def tokens_no_periodo(tenant_id: int, inicio: datetime, fim: datetime) -> int:
+    """Total de token do cliente no periodo `[inicio, fim)`.
+
+    Existe separado do `resumo` porque o teto de gasto consulta isto a cada
+    mensagem que chega: uma consulta e uma coluna, em vez do agregado inteiro
+    com os contadores por categoria que o teto nao usa.
+    """
+    totais = Mensagem.objects.filter(
+        tenant_id=tenant_id, criado_em__gte=inicio, criado_em__lt=fim
+    ).aggregate(
+        entrada=Coalesce(Sum("tokens_entrada"), 0),
+        saida=Coalesce(Sum("tokens_saida"), 0),
+    )
+    return totais["entrada"] + totais["saida"]
+
+
+def tokens_do_mes_corrente(tenant_id: int, agora: datetime | None = None) -> int:
+    """Token gasto no mes de calendario do cliente, pelo fuso dele."""
+    agora = timezone.localtime(agora) if agora else timezone.localtime()
+    return tokens_no_periodo(tenant_id, *periodo_do_mes(agora.year, agora.month))
