@@ -255,18 +255,23 @@ def _reprocessar_entregas(agora) -> int:
 def _reatender_entradas(agora) -> int:
     """Reenfileira o atendimento de entradas que nunca foram respondidas.
 
-    `respondida_em` nula significa que nenhum `responder_inbound` chegou a
-    reservar a mensagem: o `_reservar` do pipeline carimba esse campo com lock
-    antes de redigir. Reenfileirar e seguro porque esse mesmo lock impede que
-    duas execucoes atendam a mesma entrada.
+    `respondida_em` nula significa que nenhuma execucao chegou a carimbar a
+    mensagem: o `responder_mensagem` grava esse campo com lock na ultima fase,
+    **depois** de redigir, nao antes.
 
-    Tem teto de idade, e nao so piso, porque sem ele a insistencia e eterna: o
-    `responder_mensagem` roda dentro de `transaction.atomic`, entao um defeito
-    que estoure excecao no atendimento desfaz o carimbo no rollback, a mensagem
-    volta a ser nula e a varredura a escolhe de novo a cada volta — no tier de
-    IA, gastando token em cada uma. A janela de servico e o teto natural:
-    passada ela o `agendar_texto` recusaria o envio com `JanelaFechada`, entao
-    insistir nao entrega nada.
+    Reenfileirar nao responde duas vezes, porque quem chega e encontra o campo
+    preenchido descarta o que redigiu. Mas tambem nao e de graca: como o
+    carimbo deixou de vir antes da redacao, reenfileirar pode custar uma
+    segunda redacao e, no tier de IA, um segundo pagamento. E o preco de nao
+    segurar lock de linha durante uma chamada de rede de dezenas de segundos.
+
+    Tem teto de idade, e nao so piso, porque sem ele a insistencia e eterna:
+    excecao ao redigir deixa o carimbo nunca feito, e excecao depois dele —
+    dentro da transacao curta que carimba e agenda — o desfaz no rollback. Nos
+    dois casos a mensagem segue nula e a varredura a escolhe de novo a cada
+    volta, gastando token em cada uma no tier de IA. A janela de servico e o
+    teto natural: passada ela o `agendar_texto` recusaria o envio com
+    `JanelaFechada`, entao insistir nao entrega nada.
 
     O teto olha a idade da propria mensagem, enquanto a janela e ancorada na
     ultima entrada da conversa. Uma mensagem nova do cliente reabre a janela,
